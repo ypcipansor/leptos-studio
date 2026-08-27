@@ -18,9 +18,25 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
+    outputs:
+      pages_enabled: ${{ steps.pages.outputs.enabled }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
+      # Pages must be enabled manually once in repo Settings -> Pages
+      # (source: GitHub Actions). Skip deploy gracefully until then.
+      - name: Check Pages availability
+        id: pages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh api "repos/${{ github.repository }}/pages" --silent; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=GitHub Pages not enabled::Enable Pages in repo Settings -> Pages (source: GitHub Actions) to activate deployment."
+          fi
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -42,17 +58,18 @@ jobs:
         run: touch dist/.nojekyll
 
       - name: Setup Pages
+        if: steps.pages.outputs.enabled == 'true'
         uses: actions/configure-pages@v6
-        with:
-          enablement: true
 
       - name: Upload
+        if: steps.pages.outputs.enabled == 'true'
         uses: actions/upload-pages-artifact@v5
         with:
           path: dist
 
   deploy:
     name: Deploy
+    if: needs.build.outputs.pages_enabled == 'true'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
