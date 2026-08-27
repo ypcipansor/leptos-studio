@@ -45,13 +45,19 @@ impl ComponentCategory {
         match self {
             ComponentCategory::All => true,
             ComponentCategory::Basic => {
-                matches!(component.kind.as_str(), "Button" | "Text")
+                matches!(
+                    component.kind.as_str(),
+                    "Button" | "Text" | "Badge" | "Progress"
+                )
             }
             ComponentCategory::Form => {
-                matches!(component.kind.as_str(), "Input" | "Button")
+                matches!(
+                    component.kind.as_str(),
+                    "Input" | "Button" | "Select" | "Checkbox" | "RadioGroup" | "Switch"
+                )
             }
             ComponentCategory::Layout => {
-                matches!(component.kind.as_str(), "Container")
+                matches!(component.kind.as_str(), "Container" | "Divider")
             }
             ComponentCategory::Custom => component.category == "Custom",
         }

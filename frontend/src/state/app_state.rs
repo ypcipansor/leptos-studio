@@ -15,18 +15,69 @@ use crate::domain::{CanvasComponent, ComponentId, Variable};
 pub struct CanvasState {
     pub components: RwSignal<Vec<CanvasComponent>>,
     pub selected: RwSignal<Option<ComponentId>>,
+    /// Multi-select set (Shift/Ctrl+click). The primary selection (`selected`)
+    /// is always the last-clicked component.
+    pub selected_components: RwSignal<Vec<ComponentId>>,
+    /// Canvas zoom factor (0.25 – 4.0). 1.0 = 100%.
+    pub zoom: RwSignal<f64>,
     pub history: RwSignal<History>,
     pub drag_state: RwSignal<DragState>,
 }
 
 impl CanvasState {
+    pub const MIN_ZOOM: f64 = 0.25;
+    pub const MAX_ZOOM: f64 = 4.0;
+
     pub fn new() -> Self {
         Self {
             components: RwSignal::new(Vec::new()),
             selected: RwSignal::new(None),
+            selected_components: RwSignal::new(Vec::new()),
+            zoom: RwSignal::new(1.0),
             history: RwSignal::new(History::new()),
             drag_state: RwSignal::new(DragState::NotDragging),
         }
+    }
+
+    /// Clear both the primary selection and the multi-select set.
+    pub fn clear_selection(&self) {
+        self.selected.set(None);
+        self.selected_components.set(Vec::new());
+    }
+
+    /// Select a single component, replacing any multi-select.
+    pub fn select_single(&self, id: ComponentId) {
+        self.selected.set(Some(id));
+        self.selected_components.set(vec![id]);
+    }
+
+    /// Toggle a component in the multi-select set (Shift/Ctrl+click).
+    pub fn toggle_multi_select(&self, id: ComponentId) {
+        self.selected_components.update(|list| {
+            if let Some(pos) = list.iter().position(|existing| *existing == id) {
+                list.remove(pos);
+            } else {
+                list.push(id);
+            }
+        });
+        self.selected.set(Some(id));
+    }
+
+    /// Check whether a component is part of the current selection.
+    pub fn is_selected(&self, id: ComponentId) -> bool {
+        self.selected_components.get().contains(&id) || self.selected.get().is_some_and(|s| s == id)
+    }
+
+    /// Adjust zoom by a multiplicative factor, clamped to the allowed range.
+    pub fn zoom_by(&self, factor: f64) {
+        self.zoom.update(|z| {
+            *z = (*z * factor).clamp(Self::MIN_ZOOM, Self::MAX_ZOOM);
+        });
+    }
+
+    /// Reset zoom to 100%.
+    pub fn reset_zoom(&self) {
+        self.zoom.set(1.0);
     }
 
     /// Add a component to the canvas (internal helper without snapshot)
@@ -447,6 +498,10 @@ impl CanvasState {
     pub fn apply_snapshot(&self, snapshot: &Snapshot) {
         self.components.set(snapshot.components.clone());
         self.selected.set(snapshot.selected);
+        // Prune multi-select entries that no longer exist
+        let existing: Vec<ComponentId> = snapshot.components.iter().map(|c| *c.id()).collect();
+        self.selected_components
+            .update(|list| list.retain(|id| existing.contains(id)));
     }
 }
 

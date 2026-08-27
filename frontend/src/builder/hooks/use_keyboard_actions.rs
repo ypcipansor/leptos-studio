@@ -46,10 +46,23 @@ pub fn use_keyboard_actions(
                 app_state.save();
             }
             KeyboardAction::Delete => {
-                if let Some(selected_id) = app_state.canvas.selected.get() {
+                let multi = app_state.canvas.selected_components.get();
+                if multi.len() > 1 {
+                    let count = multi.len();
+                    for id in &multi {
+                        app_state.canvas.remove_component(id);
+                    }
+                    app_state.canvas.clear_selection();
+                    app_state
+                        .ui
+                        .notification
+                        .set(Some(Notification::success(format!(
+                            "🗑️ {count} components deleted"
+                        ))));
+                } else if let Some(selected_id) = app_state.canvas.selected.get() {
                     // remove_component already records snapshot
                     app_state.canvas.remove_component(&selected_id);
-                    app_state.canvas.selected.set(None);
+                    app_state.canvas.clear_selection();
                     app_state.ui.notification.set(Some(Notification::success(
                         "🗑️ Component deleted".to_string(),
                     )));
@@ -191,7 +204,40 @@ pub fn use_keyboard_actions(
                 app_state.ui.show_command_palette.set(true);
             }
             KeyboardAction::Deselect => {
-                app_state.canvas.selected.set(None);
+                app_state.canvas.clear_selection();
+            }
+            KeyboardAction::SelectAll => {
+                let ids: Vec<_> = app_state
+                    .canvas
+                    .components
+                    .get()
+                    .iter()
+                    .map(|c| *c.id())
+                    .collect();
+                if ids.is_empty() {
+                    app_state.ui.notification.set(Some(Notification::warning(
+                        "⚠️ No components to select".to_string(),
+                    )));
+                } else {
+                    let count = ids.len();
+                    app_state.canvas.selected_components.set(ids.clone());
+                    app_state.canvas.selected.set(ids.last().copied());
+                    app_state
+                        .ui
+                        .notification
+                        .set(Some(Notification::info(format!(
+                            "✓ {count} components selected"
+                        ))));
+                }
+            }
+            KeyboardAction::ZoomIn => {
+                app_state.canvas.zoom_by(1.1);
+            }
+            KeyboardAction::ZoomOut => {
+                app_state.canvas.zoom_by(1.0 / 1.1);
+            }
+            KeyboardAction::ZoomReset => {
+                app_state.canvas.reset_zoom();
             }
             KeyboardAction::Export => {
                 let comps = app_state.canvas.components.get();
@@ -224,7 +270,7 @@ pub fn use_keyboard_actions(
                                     match copy_to_clipboard(&json).await {
                                         Ok(()) => {
                                             app_state_clone.canvas.remove_component(&selected_id);
-                                            app_state_clone.canvas.selected.set(None);
+                                            app_state_clone.canvas.clear_selection();
                                             app_state_clone.ui.notification.set(Some(
                                                 Notification::success(
                                                     "✂️ Component cut!".to_string(),
@@ -268,8 +314,6 @@ pub fn use_keyboard_actions(
                     app_state.canvas.move_component_down(&id);
                 }
             }
-            // Add other cases if any
-            _ => {}
         }
     }
 }

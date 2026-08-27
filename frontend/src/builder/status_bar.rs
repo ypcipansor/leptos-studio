@@ -43,7 +43,15 @@ pub fn StatusBar() -> impl IntoView {
 
                 // Selection status
                 {move || {
-                    if let Some(comp) = derived.selected_component.get() {
+                    let multi_count = app_state.canvas.selected_components.get().len();
+                    if multi_count > 1 {
+                        view! {
+                            <span class="status-item status-selected" title="Multiple components selected">
+                                <span class="status-icon">"✓"</span>
+                                <span class="status-text">{format!("{} selected", multi_count)}</span>
+                            </span>
+                        }.into_any()
+                    } else if let Some(comp) = derived.selected_component.get() {
                         let type_name = format!("{:?}", comp.component_type());
                         view! {
                             <span class="status-item status-selected" title="Selected component">

@@ -431,6 +431,166 @@ pub fn builtin_library_components() -> Vec<LibraryComponent> {
             ]),
             description: Some("Card container with shadow and rounded corners".to_string()),
         },
+        LibraryComponent {
+            name: "Divider".to_string(),
+            kind: "Divider".to_string(),
+            template: None,
+            category: "Layout".to_string(),
+            props_schema: Some(vec![
+                PropSchema {
+                    name: "orientation".to_string(),
+                    prop_type: PropType::Enum {
+                        options: vec!["Horizontal".to_string(), "Vertical".to_string()],
+                    },
+                    required: true,
+                    description: Some("Divider orientation".to_string()),
+                },
+                PropSchema {
+                    name: "thickness".to_string(),
+                    prop_type: PropType::Number,
+                    required: false,
+                    description: Some("Line thickness in pixels".to_string()),
+                },
+            ]),
+            description: Some("Visual separator between content".to_string()),
+        },
+        LibraryComponent {
+            name: "Checkbox".to_string(),
+            kind: "Checkbox".to_string(),
+            template: None,
+            category: "Form".to_string(),
+            props_schema: Some(vec![
+                PropSchema {
+                    name: "label".to_string(),
+                    prop_type: PropType::String,
+                    required: false,
+                    description: Some("Checkbox label".to_string()),
+                },
+                PropSchema {
+                    name: "checked".to_string(),
+                    prop_type: PropType::Bool,
+                    required: false,
+                    description: Some("Checked state".to_string()),
+                },
+                PropSchema {
+                    name: "disabled".to_string(),
+                    prop_type: PropType::Bool,
+                    required: false,
+                    description: Some("Disable interaction".to_string()),
+                },
+            ]),
+            description: Some("Checkbox input with label".to_string()),
+        },
+        LibraryComponent {
+            name: "RadioGroup".to_string(),
+            kind: "RadioGroup".to_string(),
+            template: None,
+            category: "Form".to_string(),
+            props_schema: Some(vec![
+                PropSchema {
+                    name: "options".to_string(),
+                    prop_type: PropType::String,
+                    required: true,
+                    description: Some("Comma separated options".to_string()),
+                },
+                PropSchema {
+                    name: "selected".to_string(),
+                    prop_type: PropType::String,
+                    required: false,
+                    description: Some("Selected option".to_string()),
+                },
+                PropSchema {
+                    name: "disabled".to_string(),
+                    prop_type: PropType::Bool,
+                    required: false,
+                    description: Some("Disable interaction".to_string()),
+                },
+            ]),
+            description: Some("Radio button group".to_string()),
+        },
+        LibraryComponent {
+            name: "Switch".to_string(),
+            kind: "Switch".to_string(),
+            template: None,
+            category: "Form".to_string(),
+            props_schema: Some(vec![
+                PropSchema {
+                    name: "label".to_string(),
+                    prop_type: PropType::String,
+                    required: false,
+                    description: Some("Switch label".to_string()),
+                },
+                PropSchema {
+                    name: "checked".to_string(),
+                    prop_type: PropType::Bool,
+                    required: false,
+                    description: Some("On/Off state".to_string()),
+                },
+                PropSchema {
+                    name: "disabled".to_string(),
+                    prop_type: PropType::Bool,
+                    required: false,
+                    description: Some("Disable interaction".to_string()),
+                },
+            ]),
+            description: Some("Toggle switch".to_string()),
+        },
+        LibraryComponent {
+            name: "Badge".to_string(),
+            kind: "Badge".to_string(),
+            template: None,
+            category: "Basic".to_string(),
+            props_schema: Some(vec![
+                PropSchema {
+                    name: "text".to_string(),
+                    prop_type: PropType::String,
+                    required: true,
+                    description: Some("Badge text".to_string()),
+                },
+                PropSchema {
+                    name: "variant".to_string(),
+                    prop_type: PropType::Enum {
+                        options: vec![
+                            "Default".to_string(),
+                            "Primary".to_string(),
+                            "Success".to_string(),
+                            "Warning".to_string(),
+                            "Error".to_string(),
+                        ],
+                    },
+                    required: true,
+                    description: Some("Color variant".to_string()),
+                },
+            ]),
+            description: Some("Small status badge".to_string()),
+        },
+        LibraryComponent {
+            name: "Progress".to_string(),
+            kind: "Progress".to_string(),
+            template: None,
+            category: "Basic".to_string(),
+            props_schema: Some(vec![
+                PropSchema {
+                    name: "value".to_string(),
+                    prop_type: PropType::Number,
+                    required: true,
+                    description: Some("Current value".to_string()),
+                },
+                PropSchema {
+                    name: "max".to_string(),
+                    prop_type: PropType::Number,
+                    required: true,
+                    description: Some("Maximum value".to_string()),
+                },
+                PropSchema {
+                    name: "show_label".to_string(),
+                    prop_type: PropType::Bool,
+                    required: false,
+                    description: Some("Show percentage label".to_string()),
+                },
+            ]),
+            description: Some("Progress bar".to_string()),
+        },
     ]
 }
 
@@ -486,6 +646,30 @@ pub fn create_canvas_component(component_type: &str) -> Option<CanvasComponent> 
         "Card" => {
             let card = crate::domain::CardComponent::new();
             Some(CanvasComponent::Card(card))
+        }
+        "Divider" => {
+            let divider = crate::domain::DividerComponent::new();
+            Some(CanvasComponent::Divider(divider))
+        }
+        "Checkbox" => {
+            let checkbox = crate::domain::CheckboxComponent::new("Checkbox".to_string());
+            Some(CanvasComponent::Checkbox(checkbox))
+        }
+        "RadioGroup" => {
+            let radio = crate::domain::RadioGroupComponent::new();
+            Some(CanvasComponent::RadioGroup(radio))
+        }
+        "Switch" => {
+            let switch = crate::domain::SwitchComponent::new("Switch".to_string());
+            Some(CanvasComponent::Switch(switch))
+        }
+        "Badge" => {
+            let badge = crate::domain::BadgeComponent::new("Badge".to_string());
+            Some(CanvasComponent::Badge(badge))
+        }
+        "Progress" => {
+            let progress = crate::domain::ProgressComponent::new();
+            Some(CanvasComponent::Progress(progress))
         }
         data if data.starts_with("Custom::") => {
             let name = data.strip_prefix("Custom::").unwrap_or("Custom");

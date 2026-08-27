@@ -111,6 +111,12 @@ pub enum ComponentType {
     Card,
     Select,
     Custom,
+    Divider,
+    Checkbox,
+    RadioGroup,
+    Switch,
+    Badge,
+    Progress,
 }
 
 impl std::fmt::Display for ComponentType {
@@ -662,6 +668,313 @@ impl Component for CustomComponent {
     }
 }
 
+/// Divider orientation
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DividerOrientation {
+    Horizontal,
+    Vertical,
+}
+
+/// Divider component - a visual separator
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DividerComponent {
+    pub id: ComponentId,
+    pub orientation: DividerOrientation,
+    pub thickness: u32,
+    #[serde(default)]
+    pub animation: Option<Animation>,
+    #[serde(default)]
+    pub bindings: HashMap<String, String>,
+    #[serde(default)]
+    pub style: ComponentStyle,
+}
+
+impl DividerComponent {
+    pub fn new() -> Self {
+        Self {
+            id: ComponentId::new(),
+            orientation: DividerOrientation::Horizontal,
+            thickness: 1,
+            animation: None,
+            bindings: HashMap::new(),
+            style: ComponentStyle::default(),
+        }
+    }
+}
+
+impl Default for DividerComponent {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Component for DividerComponent {
+    fn component_type(&self) -> ComponentType {
+        ComponentType::Divider
+    }
+
+    fn id(&self) -> &ComponentId {
+        &self.id
+    }
+
+    fn validate(&self) -> Result<(), ValidationError> {
+        if self.thickness == 0 {
+            return Err(ValidationError::InvalidPropertyValue(
+                "thickness".to_string(),
+                "Divider thickness must be at least 1".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Checkbox component
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CheckboxComponent {
+    pub id: ComponentId,
+    pub label: String,
+    pub checked: bool,
+    pub disabled: bool,
+    pub on_change: Option<String>,
+    #[serde(default)]
+    pub animation: Option<Animation>,
+    #[serde(default)]
+    pub bindings: HashMap<String, String>,
+    #[serde(default)]
+    pub style: ComponentStyle,
+}
+
+impl CheckboxComponent {
+    pub fn new(label: String) -> Self {
+        Self {
+            id: ComponentId::new(),
+            label,
+            checked: false,
+            disabled: false,
+            on_change: None,
+            animation: None,
+            bindings: HashMap::new(),
+            style: ComponentStyle::default(),
+        }
+    }
+}
+
+impl Component for CheckboxComponent {
+    fn component_type(&self) -> ComponentType {
+        ComponentType::Checkbox
+    }
+
+    fn id(&self) -> &ComponentId {
+        &self.id
+    }
+
+    fn validate(&self) -> Result<(), ValidationError> {
+        Ok(())
+    }
+}
+
+/// Radio group component
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RadioGroupComponent {
+    pub id: ComponentId,
+    pub options: String, // Comma separated values
+    pub selected: String,
+    pub disabled: bool,
+    pub on_change: Option<String>,
+    #[serde(default)]
+    pub animation: Option<Animation>,
+    #[serde(default)]
+    pub bindings: HashMap<String, String>,
+    #[serde(default)]
+    pub style: ComponentStyle,
+}
+
+impl RadioGroupComponent {
+    pub fn new() -> Self {
+        Self {
+            id: ComponentId::new(),
+            options: "Option 1, Option 2, Option 3".to_string(),
+            selected: String::new(),
+            disabled: false,
+            on_change: None,
+            animation: None,
+            bindings: HashMap::new(),
+            style: ComponentStyle::default(),
+        }
+    }
+}
+
+impl Default for RadioGroupComponent {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Component for RadioGroupComponent {
+    fn component_type(&self) -> ComponentType {
+        ComponentType::RadioGroup
+    }
+
+    fn id(&self) -> &ComponentId {
+        &self.id
+    }
+
+    fn validate(&self) -> Result<(), ValidationError> {
+        Ok(())
+    }
+}
+
+/// Switch (toggle) component
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SwitchComponent {
+    pub id: ComponentId,
+    pub label: String,
+    pub checked: bool,
+    pub disabled: bool,
+    pub on_change: Option<String>,
+    #[serde(default)]
+    pub animation: Option<Animation>,
+    #[serde(default)]
+    pub bindings: HashMap<String, String>,
+    #[serde(default)]
+    pub style: ComponentStyle,
+}
+
+impl SwitchComponent {
+    pub fn new(label: String) -> Self {
+        Self {
+            id: ComponentId::new(),
+            label,
+            checked: false,
+            disabled: false,
+            on_change: None,
+            animation: None,
+            bindings: HashMap::new(),
+            style: ComponentStyle::default(),
+        }
+    }
+}
+
+impl Component for SwitchComponent {
+    fn component_type(&self) -> ComponentType {
+        ComponentType::Switch
+    }
+
+    fn id(&self) -> &ComponentId {
+        &self.id
+    }
+
+    fn validate(&self) -> Result<(), ValidationError> {
+        Ok(())
+    }
+}
+
+/// Badge variants
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BadgeVariant {
+    Default,
+    Primary,
+    Success,
+    Warning,
+    Error,
+}
+
+/// Badge component - a small status label
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BadgeComponent {
+    pub id: ComponentId,
+    pub text: String,
+    pub variant: BadgeVariant,
+    #[serde(default)]
+    pub animation: Option<Animation>,
+    #[serde(default)]
+    pub bindings: HashMap<String, String>,
+    #[serde(default)]
+    pub style: ComponentStyle,
+}
+
+impl BadgeComponent {
+    pub fn new(text: String) -> Self {
+        Self {
+            id: ComponentId::new(),
+            text,
+            variant: BadgeVariant::Default,
+            animation: None,
+            bindings: HashMap::new(),
+            style: ComponentStyle::default(),
+        }
+    }
+}
+
+impl Component for BadgeComponent {
+    fn component_type(&self) -> ComponentType {
+        ComponentType::Badge
+    }
+
+    fn id(&self) -> &ComponentId {
+        &self.id
+    }
+
+    fn validate(&self) -> Result<(), ValidationError> {
+        Ok(())
+    }
+}
+
+/// Progress bar component
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ProgressComponent {
+    pub id: ComponentId,
+    pub value: f64,
+    pub max: f64,
+    pub show_label: bool,
+    #[serde(default)]
+    pub animation: Option<Animation>,
+    #[serde(default)]
+    pub bindings: HashMap<String, String>,
+    #[serde(default)]
+    pub style: ComponentStyle,
+}
+
+impl ProgressComponent {
+    pub fn new() -> Self {
+        Self {
+            id: ComponentId::new(),
+            value: 50.0,
+            max: 100.0,
+            show_label: true,
+            animation: None,
+            bindings: HashMap::new(),
+            style: ComponentStyle::default(),
+        }
+    }
+}
+
+impl Default for ProgressComponent {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Component for ProgressComponent {
+    fn component_type(&self) -> ComponentType {
+        ComponentType::Progress
+    }
+
+    fn id(&self) -> &ComponentId {
+        &self.id
+    }
+
+    fn validate(&self) -> Result<(), ValidationError> {
+        if self.max <= 0.0 {
+            return Err(ValidationError::InvalidPropertyValue(
+                "max".to_string(),
+                "Progress max must be greater than 0".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Main component enum with all variants
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum CanvasComponent {
@@ -673,6 +986,12 @@ pub enum CanvasComponent {
     Card(CardComponent),
     Select(SelectComponent),
     Custom(CustomComponent),
+    Divider(DividerComponent),
+    Checkbox(CheckboxComponent),
+    RadioGroup(RadioGroupComponent),
+    Switch(SwitchComponent),
+    Badge(BadgeComponent),
+    Progress(ProgressComponent),
 }
 
 impl CanvasComponent {
@@ -686,6 +1005,12 @@ impl CanvasComponent {
             CanvasComponent::Card(c) => c.id(),
             CanvasComponent::Select(c) => c.id(),
             CanvasComponent::Custom(c) => c.id(),
+            CanvasComponent::Divider(c) => c.id(),
+            CanvasComponent::Checkbox(c) => c.id(),
+            CanvasComponent::RadioGroup(c) => c.id(),
+            CanvasComponent::Switch(c) => c.id(),
+            CanvasComponent::Badge(c) => c.id(),
+            CanvasComponent::Progress(c) => c.id(),
         }
     }
 
@@ -699,6 +1024,12 @@ impl CanvasComponent {
             CanvasComponent::Card(c) => c.component_type(),
             CanvasComponent::Select(c) => c.component_type(),
             CanvasComponent::Custom(c) => c.component_type(),
+            CanvasComponent::Divider(c) => c.component_type(),
+            CanvasComponent::Checkbox(c) => c.component_type(),
+            CanvasComponent::RadioGroup(c) => c.component_type(),
+            CanvasComponent::Switch(c) => c.component_type(),
+            CanvasComponent::Badge(c) => c.component_type(),
+            CanvasComponent::Progress(c) => c.component_type(),
         }
     }
 
@@ -712,6 +1043,12 @@ impl CanvasComponent {
             CanvasComponent::Card(c) => c.validate(),
             CanvasComponent::Select(c) => c.validate(),
             CanvasComponent::Custom(c) => c.validate(),
+            CanvasComponent::Divider(c) => c.validate(),
+            CanvasComponent::Checkbox(c) => c.validate(),
+            CanvasComponent::RadioGroup(c) => c.validate(),
+            CanvasComponent::Switch(c) => c.validate(),
+            CanvasComponent::Badge(c) => c.validate(),
+            CanvasComponent::Progress(c) => c.validate(),
         }
     }
 
@@ -767,6 +1104,36 @@ impl CanvasComponent {
                 new_c.id = ComponentId::new();
                 CanvasComponent::Custom(new_c)
             }
+            CanvasComponent::Divider(c) => {
+                let mut new_c = c.clone();
+                new_c.id = ComponentId::new();
+                CanvasComponent::Divider(new_c)
+            }
+            CanvasComponent::Checkbox(c) => {
+                let mut new_c = c.clone();
+                new_c.id = ComponentId::new();
+                CanvasComponent::Checkbox(new_c)
+            }
+            CanvasComponent::RadioGroup(c) => {
+                let mut new_c = c.clone();
+                new_c.id = ComponentId::new();
+                CanvasComponent::RadioGroup(new_c)
+            }
+            CanvasComponent::Switch(c) => {
+                let mut new_c = c.clone();
+                new_c.id = ComponentId::new();
+                CanvasComponent::Switch(new_c)
+            }
+            CanvasComponent::Badge(c) => {
+                let mut new_c = c.clone();
+                new_c.id = ComponentId::new();
+                CanvasComponent::Badge(new_c)
+            }
+            CanvasComponent::Progress(c) => {
+                let mut new_c = c.clone();
+                new_c.id = ComponentId::new();
+                CanvasComponent::Progress(new_c)
+            }
         }
     }
 }
@@ -804,6 +1171,56 @@ mod tests {
         let invalid_template =
             CustomComponent::new("ValidName".to_string(), "No tags here".to_string());
         assert!(invalid_template.validate().is_err());
+    }
+
+    #[test]
+    fn test_divider_component_validation() {
+        let divider = DividerComponent::new();
+        assert!(divider.validate().is_ok());
+
+        let zero_thickness = DividerComponent {
+            thickness: 0,
+            ..DividerComponent::new()
+        };
+        assert!(zero_thickness.validate().is_err());
+    }
+
+    #[test]
+    fn test_progress_component_validation() {
+        let progress = ProgressComponent::new();
+        assert!(progress.validate().is_ok());
+
+        let invalid_max = ProgressComponent {
+            max: 0.0,
+            ..ProgressComponent::new()
+        };
+        assert!(invalid_max.validate().is_err());
+    }
+
+    #[test]
+    fn test_new_components_duplicate_with_new_id() {
+        let components = vec![
+            CanvasComponent::Divider(DividerComponent::new()),
+            CanvasComponent::Checkbox(CheckboxComponent::new("Check".to_string())),
+            CanvasComponent::RadioGroup(RadioGroupComponent::new()),
+            CanvasComponent::Switch(SwitchComponent::new("Switch".to_string())),
+            CanvasComponent::Badge(BadgeComponent::new("Badge".to_string())),
+            CanvasComponent::Progress(ProgressComponent::new()),
+        ];
+
+        for comp in &components {
+            let dup = comp.duplicate_with_new_id();
+            assert_ne!(dup.id(), comp.id());
+            assert_eq!(dup.component_type(), comp.component_type());
+            assert!(dup.validate().is_ok());
+        }
+    }
+
+    #[test]
+    fn test_badge_variants() {
+        let badge = BadgeComponent::new("Status".to_string());
+        assert_eq!(badge.variant, BadgeVariant::Default);
+        assert!(badge.validate().is_ok());
     }
 
     #[test]

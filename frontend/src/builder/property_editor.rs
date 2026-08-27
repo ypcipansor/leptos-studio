@@ -1,6 +1,8 @@
 use super::property_editors::{
-    ButtonPropertyEditor, CardPropertyEditor, ContainerPropertyEditor, CustomPropertyEditor,
-    ImagePropertyEditor, InputPropertyEditor, SelectPropertyEditor, TextPropertyEditor,
+    BadgePropertyEditor, ButtonPropertyEditor, CardPropertyEditor, CheckboxPropertyEditor,
+    ContainerPropertyEditor, CustomPropertyEditor, DividerPropertyEditor, ImagePropertyEditor,
+    InputPropertyEditor, ProgressPropertyEditor, RadioGroupPropertyEditor, SelectPropertyEditor,
+    SwitchPropertyEditor, TextPropertyEditor,
 };
 use crate::domain::CanvasComponent;
 use crate::state::AppState;
@@ -15,7 +17,7 @@ pub fn PropertyEditor() -> impl IntoView {
     let delete_selected = move |_| {
         if let Some(id) = canvas_state.selected.get() {
             canvas_state.remove_component(&id);
-            canvas_state.selected.set(None);
+            canvas_state.clear_selection();
             app_state.ui.notify(crate::state::Notification::info(
                 "Component removed".to_string(),
             ));
@@ -83,6 +85,36 @@ pub fn PropertyEditor() -> impl IntoView {
                             CanvasComponent::Custom(custom) => {
                                 view! {
                                     <CustomPropertyEditor id=selected_id custom=custom />
+                                }.into_any()
+                            },
+                            CanvasComponent::Divider(divider) => {
+                                view! {
+                                    <DividerPropertyEditor id=selected_id divider=divider />
+                                }.into_any()
+                            },
+                            CanvasComponent::Checkbox(checkbox) => {
+                                view! {
+                                    <CheckboxPropertyEditor id=selected_id checkbox=checkbox />
+                                }.into_any()
+                            },
+                            CanvasComponent::RadioGroup(radio) => {
+                                view! {
+                                    <RadioGroupPropertyEditor id=selected_id radio=radio />
+                                }.into_any()
+                            },
+                            CanvasComponent::Switch(switch) => {
+                                view! {
+                                    <SwitchPropertyEditor id=selected_id switch=switch />
+                                }.into_any()
+                            },
+                            CanvasComponent::Badge(badge) => {
+                                view! {
+                                    <BadgePropertyEditor id=selected_id badge=badge />
+                                }.into_any()
+                            },
+                            CanvasComponent::Progress(progress) => {
+                                view! {
+                                    <ProgressPropertyEditor id=selected_id progress=progress />
                                 }.into_any()
                             },
                         }

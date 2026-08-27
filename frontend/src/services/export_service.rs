@@ -1,6 +1,5 @@
 use crate::domain::{Animation, AppError, AppResult, CanvasComponent, Variable, VariableType};
 use crate::state::ExportPreset;
-use std::cell::RefCell;
 
 /// Helper to generate animation styles
 fn get_animation_css(animation: &Option<Animation>) -> String {
@@ -9,6 +8,49 @@ fn get_animation_css(animation: &Option<Animation>) -> String {
         .map(|a| a.to_css_string())
         .unwrap_or_default()
 }
+
+/// Base component CSS embedded into Plain exports so the result is self-contained.
+/// Must not contain double quotes (embedded as a string literal in generated code).
+const EXPORT_CSS: &str = r#"
+button { display: inline-flex; align-items: center; justify-content: center; padding: 0.5rem 1rem; border: none; border-radius: 0.375rem; font-weight: 500; cursor: pointer; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-primary { background-color: #007bff; color: white; }
+.btn-primary:hover { background-color: #0056b3; }
+.btn-secondary { background-color: #6c757d; color: white; }
+.btn-secondary:hover { background-color: #545b62; }
+.btn-outline { background-color: transparent; border: 1px solid #6c757d; color: #6c757d; }
+.btn-outline:hover { background-color: #6c757d; color: white; }
+.btn-ghost { background-color: transparent; color: #007bff; }
+.btn-ghost:hover { background-color: rgba(0, 123, 255, 0.1); }
+.btn-sm { padding: 0.25rem 0.5rem; font-size: 0.875rem; }
+.btn-md { padding: 0.5rem 1rem; font-size: 1rem; }
+.btn-lg { padding: 0.75rem 1.5rem; font-size: 1.125rem; }
+
+.text-heading1 { font-size: 2rem; font-weight: 700; line-height: 1.2; }
+.text-heading2 { font-size: 1.5rem; font-weight: 600; line-height: 1.3; }
+.text-heading3 { font-size: 1.25rem; font-weight: 600; line-height: 1.4; }
+.text-body { font-size: 1rem; font-weight: 400; line-height: 1.5; }
+.text-caption { font-size: 0.875rem; font-weight: 400; line-height: 1.4; }
+
+.container.flex-row { display: flex; flex-direction: row; }
+.container.flex-col { display: flex; flex-direction: column; }
+.container.flex-wrap { flex-wrap: wrap; }
+.container.grid { display: grid; }
+.container.stack { position: relative; }
+.container.stack > * { position: absolute; width: 100%; height: 100%; }
+
+.card-bordered { border: 1px solid #e5e7eb; }
+
+.badge { display: inline-block; padding: 0.2em 0.6em; border-radius: 9999px; font-size: 0.875rem; font-weight: 600; }
+.badge-default { background-color: #6c757d; color: white; }
+.badge-primary { background-color: #007bff; color: white; }
+.badge-success { background-color: #28a745; color: white; }
+.badge-warning { background-color: #ffc107; color: #212529; }
+.badge-error { background-color: #dc3545; color: white; }
+
+progress { accent-color: #007bff; }
+.checkbox input, .switch input { margin-right: 0.5rem; }
+"#;
 
 /// Code generator trait
 pub trait CodeGenerator {
@@ -20,34 +62,30 @@ pub trait CodeGenerator {
 /// Leptos code generator
 pub struct LeptosCodeGenerator {
     preset: ExportPreset,
-    /// Tracks signals that need to be injected at the top of the component
-    /// Format: (signal_name, default_value)
-    required_signals: RefCell<Vec<(String, String)>>,
 }
 
 impl LeptosCodeGenerator {
     pub fn new(preset: ExportPreset) -> Self {
-        Self {
-            preset,
-            required_signals: RefCell::new(Vec::new()),
-        }
+        Self { preset }
     }
 
     fn generate_imports(&self) -> String {
         match self.preset {
-            ExportPreset::Plain => "use leptos::*;\n".to_string(),
-            ExportPreset::ThawUi => "use leptos::*;\nuse thaw::*;\n".to_string(),
-            ExportPreset::LeptosMaterial => "use leptos::*;\nuse leptos_material::*;\n".to_string(),
-            ExportPreset::LeptosUse => "use leptos::*;\nuse leptos_use::*;\n".to_string(),
+            ExportPreset::Plain => "use leptos::prelude::*;\n".to_string(),
+            ExportPreset::ThawUi => "use leptos::prelude::*;\nuse thaw::*;\n".to_string(),
+            ExportPreset::LeptosMaterial => {
+                "use leptos::prelude::*;\nuse leptos_material::*;\n".to_string()
+            }
+            ExportPreset::LeptosUse => "use leptos::prelude::*;\nuse leptos_use::*;\n".to_string(),
         }
     }
 
-    #[allow(clippy::only_used_in_recursion)]
     fn generate_component(
         &self,
         component: &CanvasComponent,
         output: &mut String,
         indent_level: usize,
+        signals: &mut Vec<(String, String)>,
     ) -> AppResult<()> {
         let indent = "    ".repeat(indent_level);
 
@@ -208,10 +246,8 @@ impl LeptosCodeGenerator {
                     format!("on:input={}", handler)
                 } else {
                     // Track signal for this input
-                    let signal_name = format!("input_{}", self.required_signals.borrow().len());
-                    self.required_signals
-                        .borrow_mut()
-                        .push((signal_name.clone(), "String::new()".to_string()));
+                    let signal_name = format!("input_{}", signals.len());
+                    signals.push((signal_name.clone(), "String::new()".to_string()));
                     format!(
                         "prop:value={} on:input=move |ev| set_{}(event_target_value(&ev))",
                         signal_name, signal_name
@@ -421,7 +457,7 @@ impl LeptosCodeGenerator {
 
                 // Recursively generate children
                 for child in &container.children {
-                    self.generate_component(child, output, indent_level + 1)?;
+                    self.generate_component(child, output, indent_level + 1, signals)?;
                 }
 
                 output.push_str(&format!("{}        </div>\n", indent));
@@ -532,7 +568,7 @@ impl LeptosCodeGenerator {
                     click_handler
                 ));
                 for child in &card.children {
-                    self.generate_component(child, output, indent_level + 1)?;
+                    self.generate_component(child, output, indent_level + 1, signals)?;
                 }
                 output.push_str(&format!("{}        </div>\n", indent));
             }
@@ -558,6 +594,132 @@ impl LeptosCodeGenerator {
                     indent, id_attr, class_attr, custom.template
                 ));
             }
+            CanvasComponent::Divider(divider) => {
+                let style = match divider.orientation {
+                    crate::domain::DividerOrientation::Horizontal => format!(
+                        "border: none; border-top: {}px solid #e5e7eb; margin: 8px 0;",
+                        divider.thickness
+                    ),
+                    crate::domain::DividerOrientation::Vertical => format!(
+                        "border: none; border-left: {}px solid #e5e7eb; margin: 0 8px; align-self: stretch;",
+                        divider.thickness
+                    ),
+                };
+                output.push_str(&format!(
+                    "{}        <hr role=\"separator\" style=\"{}\" />\n",
+                    indent, style
+                ));
+            }
+            CanvasComponent::Checkbox(checkbox) => {
+                let change_handler = if let Some(handler) = &checkbox.on_change {
+                    format!("on:change={}", handler)
+                } else {
+                    let signal_name = format!("checkbox_{}", signals.len());
+                    signals.push((signal_name.clone(), checkbox.checked.to_string()));
+                    format!(
+                        "prop:checked={} on:change=move |ev| set_{}(event_target_checked(&ev))",
+                        signal_name, signal_name
+                    )
+                };
+                output.push_str(&format!(
+                    "{}        <label class=\"checkbox\">\n{}            <input type=\"checkbox\" {} disabled={} {}\n{}            {}\n{}        </label>\n",
+                    indent,
+                    indent,
+                    change_handler,
+                    checkbox.disabled,
+                    get_animation_css(&checkbox.animation),
+                    indent,
+                    checkbox.label,
+                    indent
+                ));
+            }
+            CanvasComponent::RadioGroup(radio) => {
+                let group = format!("radio-group-{}", radio.id);
+                let signal_name = format!("radio_{}", signals.len());
+                let on_change_attr = if let Some(handler) = &radio.on_change {
+                    format!(" on:change={}", handler)
+                } else {
+                    format!(
+                        " on:change=move |ev| set_{}(event_target_value(&ev))",
+                        signal_name
+                    )
+                };
+
+                signals.push((
+                    signal_name.clone(),
+                    format!("\"{}\".to_string()", radio.selected),
+                ));
+
+                output.push_str(&format!(
+                    "{}        <div class=\"radio-group\" role=\"radiogroup\">\n",
+                    indent
+                ));
+                for opt in radio
+                    .options
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    output.push_str(&format!(
+                        "{}            <label><input type=\"radio\" name=\"{}\" value=\"{opt}\" prop:checked=move || {}.get() == \"{opt}\" disabled={}{} /> {opt}</label>\n",
+                        indent,
+                        group,
+                        signal_name,
+                        radio.disabled,
+                        on_change_attr
+                    ));
+                }
+                output.push_str(&format!("{}        </div>\n", indent));
+            }
+            CanvasComponent::Switch(switch) => {
+                let change_handler = if let Some(handler) = &switch.on_change {
+                    format!("on:change={}", handler)
+                } else {
+                    let signal_name = format!("switch_{}", signals.len());
+                    signals.push((signal_name.clone(), switch.checked.to_string()));
+                    format!(
+                        "prop:checked={} on:change=move |ev| set_{}(event_target_checked(&ev))",
+                        signal_name, signal_name
+                    )
+                };
+                output.push_str(&format!(
+                    "{}        <label class=\"switch\">\n{}            <input type=\"checkbox\" {} disabled={} />\n{}            {}\n{}        </label>\n",
+                    indent,
+                    indent,
+                    change_handler,
+                    switch.disabled,
+                    indent,
+                    switch.label,
+                    indent
+                ));
+            }
+            CanvasComponent::Badge(badge) => {
+                let variant = match badge.variant {
+                    crate::domain::BadgeVariant::Default => "badge-default",
+                    crate::domain::BadgeVariant::Primary => "badge-primary",
+                    crate::domain::BadgeVariant::Success => "badge-success",
+                    crate::domain::BadgeVariant::Warning => "badge-warning",
+                    crate::domain::BadgeVariant::Error => "badge-error",
+                };
+                output.push_str(&format!(
+                    "{}        <span class=\"badge {}\">{}</span>\n",
+                    indent, variant, badge.text
+                ));
+            }
+            CanvasComponent::Progress(progress) => {
+                output.push_str(&format!(
+                    "{}        <progress value=\"{}\" max=\"{}\" style=\"width: 100%;\"></progress>\n",
+                    indent, progress.value, progress.max
+                ));
+                if progress.show_label {
+                    let percent = if progress.max > 0.0 {
+                        (progress.value / progress.max * 100.0).clamp(0.0, 100.0)
+                    } else {
+                        0.0
+                    };
+                    output.push_str(&format!("{}        <span>{:.0}%</span>\n", indent, percent));
+                }
+            }
         }
 
         Ok(())
@@ -571,8 +733,7 @@ impl CodeGenerator for LeptosCodeGenerator {
         variables: &[Variable],
     ) -> AppResult<String> {
         let mut output = String::new();
-        // Reset required signals for each generation
-        self.required_signals.borrow_mut().clear();
+        let mut signals: Vec<(String, String)> = Vec::new();
 
         // Add imports
         output.push_str(&self.generate_imports());
@@ -586,8 +747,12 @@ impl CodeGenerator for LeptosCodeGenerator {
         // This requires buffering the view body
         let mut view_body = String::new();
         view_body.push_str("    view! {\n");
+        // For the Plain preset, embed base component CSS so the export is self-contained
+        if self.preset == ExportPreset::Plain {
+            view_body.push_str(&format!("        <style>\"{}\"</style>\n", EXPORT_CSS));
+        }
         for component in components {
-            self.generate_component(component, &mut view_body, 0)?;
+            self.generate_component(component, &mut view_body, 0, &mut signals)?;
         }
         view_body.push_str("    }\n");
 
@@ -610,7 +775,6 @@ impl CodeGenerator for LeptosCodeGenerator {
         }
 
         // Then local required signals
-        let signals = self.required_signals.borrow();
         if !signals.is_empty() {
             output.push_str("    // Local signals\n");
             for (name, default) in signals.iter() {
@@ -771,6 +935,78 @@ impl HtmlCodeGenerator {
                 output.push_str(&format!("{}<!-- {} -->\n", indent, custom.name));
                 output.push_str(&format!("{}{}\n", indent, custom.template));
             }
+            CanvasComponent::Divider(divider) => {
+                let style = match divider.orientation {
+                    crate::domain::DividerOrientation::Horizontal => format!(
+                        "border: none; border-top: {}px solid #e5e7eb; margin: 8px 0;",
+                        divider.thickness
+                    ),
+                    crate::domain::DividerOrientation::Vertical => format!(
+                        "border: none; border-left: {}px solid #e5e7eb; margin: 0 8px; align-self: stretch;",
+                        divider.thickness
+                    ),
+                };
+                output.push_str(&format!("{}<hr style=\"{}\">\n", indent, style));
+            }
+            CanvasComponent::Checkbox(checkbox) => {
+                output.push_str(&format!(
+                    "{}<label><input type=\"checkbox\"{}{}>{}</label>\n",
+                    indent,
+                    if checkbox.checked { " checked" } else { "" },
+                    if checkbox.disabled { " disabled" } else { "" },
+                    checkbox.label
+                ));
+            }
+            CanvasComponent::RadioGroup(radio) => {
+                let name = format!("radio-group-{}", radio.id);
+                output.push_str(&format!("{}<div class=\"radio-group\">\n", indent));
+                for opt in radio
+                    .options
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    let checked = !radio.selected.is_empty() && radio.selected == opt;
+                    output.push_str(&format!(
+                        "{}    <label><input type=\"radio\" name=\"{}\"{}{}>{}</label>\n",
+                        indent,
+                        name,
+                        if checked { " checked" } else { "" },
+                        if radio.disabled { " disabled" } else { "" },
+                        opt
+                    ));
+                }
+                output.push_str(&format!("{}</div>\n", indent));
+            }
+            CanvasComponent::Switch(switch) => {
+                output.push_str(&format!(
+                    "{}<label class=\"switch\"><input type=\"checkbox\"{}{}>{}</label>\n",
+                    indent,
+                    if switch.checked { " checked" } else { "" },
+                    if switch.disabled { " disabled" } else { "" },
+                    switch.label
+                ));
+            }
+            CanvasComponent::Badge(badge) => {
+                output.push_str(&format!(
+                    "{}<span class=\"badge badge-{}\">{}</span>\n",
+                    indent,
+                    match badge.variant {
+                        crate::domain::BadgeVariant::Default => "default",
+                        crate::domain::BadgeVariant::Primary => "primary",
+                        crate::domain::BadgeVariant::Success => "success",
+                        crate::domain::BadgeVariant::Warning => "warning",
+                        crate::domain::BadgeVariant::Error => "error",
+                    },
+                    badge.text
+                ));
+            }
+            CanvasComponent::Progress(progress) => {
+                output.push_str(&format!(
+                    "{}<progress value=\"{}\" max=\"{}\" style=\"width: 100%;\"></progress>\n",
+                    indent, progress.value, progress.max
+                ));
+            }
         }
 
         Ok(())
@@ -885,6 +1121,41 @@ impl MarkdownCodeGenerator {
                 ));
                 output.push_str(&format!("{}  - Template: {}\n", indent, custom.template));
             }
+            CanvasComponent::Divider(divider) => {
+                output.push_str(&format!(
+                    "{}- **Divider** ({})\n",
+                    indent,
+                    match divider.orientation {
+                        crate::domain::DividerOrientation::Horizontal => "horizontal",
+                        crate::domain::DividerOrientation::Vertical => "vertical",
+                    }
+                ));
+            }
+            CanvasComponent::Checkbox(checkbox) => {
+                output.push_str(&format!("{}- **Checkbox**: {}\n", indent, checkbox.label));
+                output.push_str(&format!("{}  - Checked: {}\n", indent, checkbox.checked));
+                output.push_str(&format!("{}  - Disabled: {}\n", indent, checkbox.disabled));
+            }
+            CanvasComponent::RadioGroup(radio) => {
+                output.push_str(&format!("{}- **Radio Group**\n", indent));
+                output.push_str(&format!("{}  - Options: {}\n", indent, radio.options));
+                output.push_str(&format!("{}  - Selected: {}\n", indent, radio.selected));
+            }
+            CanvasComponent::Switch(switch) => {
+                output.push_str(&format!("{}- **Switch**: {}\n", indent, switch.label));
+                output.push_str(&format!("{}  - On: {}\n", indent, switch.checked));
+            }
+            CanvasComponent::Badge(badge) => {
+                output.push_str(&format!("{}- **Badge**: {}\n", indent, badge.text));
+                output.push_str(&format!("{}  - Variant: {:?}\n", indent, badge.variant));
+            }
+            CanvasComponent::Progress(progress) => {
+                output.push_str(&format!("{}- **Progress**\n", indent));
+                output.push_str(&format!(
+                    "{}  - Value: {} / {}\n",
+                    indent, progress.value, progress.max
+                ));
+            }
         }
 
         Ok(())
@@ -904,7 +1175,7 @@ mod tests {
         let button = CanvasComponent::Button(ButtonComponent::new("Click me".to_string()));
         let code = generator.generate(&[button], &[]).unwrap();
 
-        assert!(code.contains("use leptos::*;"));
+        assert!(code.contains("use leptos::prelude::*;"));
         assert!(code.contains("#[component]"));
         assert!(code.contains("pub fn App()"));
         assert!(code.contains("Click me"));
@@ -1033,5 +1304,59 @@ mod tests {
         assert!(code.contains("- **Select**"));
         assert!(code.contains("- Placeholder: Select One"));
         assert!(code.contains("- Options: One, Two"));
+    }
+
+    #[test]
+    fn test_leptos_new_components_generator() {
+        use crate::domain::{
+            BadgeComponent, CheckboxComponent, DividerComponent, ProgressComponent,
+            RadioGroupComponent, SwitchComponent,
+        };
+        let components = vec![
+            CanvasComponent::Divider(DividerComponent::new()),
+            CanvasComponent::Checkbox(CheckboxComponent::new("Accept".to_string())),
+            CanvasComponent::RadioGroup(RadioGroupComponent {
+                options: "Alpha, Beta".to_string(),
+                ..RadioGroupComponent::new()
+            }),
+            CanvasComponent::Switch(SwitchComponent::new("Enabled".to_string())),
+            CanvasComponent::Badge(BadgeComponent::new("New".to_string())),
+            CanvasComponent::Progress(ProgressComponent::new()),
+        ];
+
+        let generator = LeptosCodeGenerator::new(ExportPreset::Plain);
+        let code = generator.generate(&components, &[]).unwrap();
+
+        assert!(code.contains("use leptos::prelude::*;"));
+        assert!(code.contains("<hr role=\"separator\""));
+        assert!(code.contains("Accept"));
+        assert!(code.contains("type=\"radio\""));
+        assert!(code.contains("Alpha"));
+        assert!(code.contains("Enabled"));
+        assert!(code.contains("badge badge-default"));
+        assert!(code.contains("<progress value=\"50\" max=\"100\""));
+        // Check that interactive signals were created
+        assert!(code.contains("let (checkbox_"));
+        assert!(code.contains("let (radio_"));
+        assert!(code.contains("let (switch_"));
+        // Plain preset embeds base CSS
+        assert!(code.contains("<style>"));
+    }
+
+    #[test]
+    fn test_html_new_components_generator() {
+        use crate::domain::{BadgeComponent, DividerComponent, ProgressComponent};
+        let components = vec![
+            CanvasComponent::Divider(DividerComponent::new()),
+            CanvasComponent::Badge(BadgeComponent::new("Tag".to_string())),
+            CanvasComponent::Progress(ProgressComponent::new()),
+        ];
+
+        let generator = HtmlCodeGenerator;
+        let code = generator.generate(&components, &[]).unwrap();
+
+        assert!(code.contains("<hr"));
+        assert!(code.contains("badge-default"));
+        assert!(code.contains("<progress"));
     }
 }

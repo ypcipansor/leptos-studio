@@ -849,6 +849,67 @@ impl ReactGenerator {
                     indent, id_attr, class_attr, custom.template
                 ));
             }
+            CanvasComponent::Divider(divider) => {
+                let style = match divider.orientation {
+                    crate::domain::DividerOrientation::Horizontal => format!(
+                        "border: none; border-top: {}px solid #e5e7eb; margin: 8px 0;",
+                        divider.thickness
+                    ),
+                    crate::domain::DividerOrientation::Vertical => format!(
+                        "border: none; border-left: {}px solid #e5e7eb; margin: 0 8px; align-self: stretch;",
+                        divider.thickness
+                    ),
+                };
+                output.push_str(&format!("{}<hr style={{{{ `{}` }}}} />\n", indent, style));
+            }
+            CanvasComponent::Checkbox(checkbox) => {
+                output.push_str(&format!(
+                    "{}<label className=\"checkbox\">\n{}  <input type=\"checkbox\" defaultChecked={{{}}} disabled={{{}}} />\n{}  {}\n{}</label>\n",
+                    indent, indent, checkbox.checked, checkbox.disabled, indent, checkbox.label, indent
+                ));
+            }
+            CanvasComponent::RadioGroup(radio) => {
+                let name = format!("radio-{}", radio.id);
+                output.push_str(&format!("{}<div className=\"radio-group\">\n", indent));
+                for opt in radio
+                    .options
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    let checked = !radio.selected.is_empty() && radio.selected == opt;
+                    output.push_str(&format!(
+                        "{}  <label><input type=\"radio\" name=\"{}\" defaultChecked={{{}}} disabled={{{}}} /> {}</label>\n",
+                        indent, name, checked, radio.disabled, opt
+                    ));
+                }
+                output.push_str(&format!("{}</div>\n", indent));
+            }
+            CanvasComponent::Switch(switch) => {
+                output.push_str(&format!(
+                    "{}<label className=\"switch\">\n{}  <input type=\"checkbox\" defaultChecked={{{}}} disabled={{{}}} />\n{}  {}\n{}</label>\n",
+                    indent, indent, switch.checked, switch.disabled, indent, switch.label, indent
+                ));
+            }
+            CanvasComponent::Badge(badge) => {
+                let variant = match badge.variant {
+                    crate::domain::BadgeVariant::Default => "default",
+                    crate::domain::BadgeVariant::Primary => "primary",
+                    crate::domain::BadgeVariant::Success => "success",
+                    crate::domain::BadgeVariant::Warning => "warning",
+                    crate::domain::BadgeVariant::Error => "error",
+                };
+                output.push_str(&format!(
+                    "{}<span className=\"badge badge-{}\">{}</span>\n",
+                    indent, variant, badge.text
+                ));
+            }
+            CanvasComponent::Progress(progress) => {
+                output.push_str(&format!(
+                    "{}<progress value={{{}}} max={{{}}} style={{{{ width: \"100%\" }}}} />\n",
+                    indent, progress.value, progress.max
+                ));
+            }
         }
 
         Ok(())
@@ -1179,6 +1240,67 @@ impl VueGenerator {
                 output.push_str(&format!(
                     "{}<div{}{} v-html=\"`{}`\"></div>\n",
                     indent, id_attr, class_attr, custom.template
+                ));
+            }
+            CanvasComponent::Divider(divider) => {
+                let style = match divider.orientation {
+                    crate::domain::DividerOrientation::Horizontal => format!(
+                        "border: none; border-top: {}px solid #e5e7eb; margin: 8px 0;",
+                        divider.thickness
+                    ),
+                    crate::domain::DividerOrientation::Vertical => format!(
+                        "border: none; border-left: {}px solid #e5e7eb; margin: 0 8px; align-self: stretch;",
+                        divider.thickness
+                    ),
+                };
+                output.push_str(&format!("{}<hr style=\"{}\" />\n", indent, style));
+            }
+            CanvasComponent::Checkbox(checkbox) => {
+                output.push_str(&format!(
+                    "{}<label>\n{}  <input type=\"checkbox\" :checked=\"{}\" :disabled=\"{}\" />\n{}  {}\n{}</label>\n",
+                    indent, indent, checkbox.checked, checkbox.disabled, indent, checkbox.label, indent
+                ));
+            }
+            CanvasComponent::RadioGroup(radio) => {
+                let name = format!("radio-{}", radio.id);
+                output.push_str(&format!("{}<div class=\"radio-group\">\n", indent));
+                for opt in radio
+                    .options
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    let checked = !radio.selected.is_empty() && radio.selected == opt;
+                    output.push_str(&format!(
+                        "{}  <label><input type=\"radio\" name=\"{}\" :checked=\"{}\" :disabled=\"{}\" /> {}</label>\n",
+                        indent, name, checked, radio.disabled, opt
+                    ));
+                }
+                output.push_str(&format!("{}</div>\n", indent));
+            }
+            CanvasComponent::Switch(switch) => {
+                output.push_str(&format!(
+                    "{}<label class=\"switch\">\n{}  <input type=\"checkbox\" :checked=\"{}\" :disabled=\"{}\" />\n{}  {}\n{}</label>\n",
+                    indent, indent, switch.checked, switch.disabled, indent, switch.label, indent
+                ));
+            }
+            CanvasComponent::Badge(badge) => {
+                let variant = match badge.variant {
+                    crate::domain::BadgeVariant::Default => "default",
+                    crate::domain::BadgeVariant::Primary => "primary",
+                    crate::domain::BadgeVariant::Success => "success",
+                    crate::domain::BadgeVariant::Warning => "warning",
+                    crate::domain::BadgeVariant::Error => "error",
+                };
+                output.push_str(&format!(
+                    "{}<span class=\"badge badge-{}\">{}</span>\n",
+                    indent, variant, badge.text
+                ));
+            }
+            CanvasComponent::Progress(progress) => {
+                output.push_str(&format!(
+                    "{}<progress :value=\"{}\" :max=\"{}\" style=\"width: 100%;\"></progress>\n",
+                    indent, progress.value, progress.max
                 ));
             }
         }
@@ -1584,6 +1706,86 @@ impl TailwindHtmlGenerator {
                 output.push_str(&format!("{}  {}\n", indent, custom.template));
                 output.push_str(&format!("{}</div>\n", indent));
             }
+            CanvasComponent::Divider(divider) => {
+                let class = match divider.orientation {
+                    crate::domain::DividerOrientation::Horizontal => {
+                        "border-t border-gray-200 my-2"
+                    }
+                    crate::domain::DividerOrientation::Vertical => {
+                        "border-l border-gray-200 mx-2 self-stretch"
+                    }
+                };
+                output.push_str(&format!("{}<hr class=\"{}\" />\n", indent, class));
+            }
+            CanvasComponent::Checkbox(checkbox) => {
+                output.push_str(&format!(
+                    "{}<label class=\"flex items-center gap-2\">\n{}  <input type=\"checkbox\" class=\"rounded border-gray-300\"{}{} />\n{}  <span>{}</span>\n{}</label>\n",
+                    indent,
+                    indent,
+                    if checkbox.checked { " checked" } else { "" },
+                    if checkbox.disabled { " disabled" } else { "" },
+                    indent,
+                    checkbox.label,
+                    indent
+                ));
+            }
+            CanvasComponent::RadioGroup(radio) => {
+                let name = format!("radio-{}", radio.id);
+                output.push_str(&format!("{}<div class=\"flex flex-col gap-1\">\n", indent));
+                for opt in radio
+                    .options
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    let checked = !radio.selected.is_empty() && radio.selected == opt;
+                    output.push_str(&format!(
+                        "{}  <label class=\"flex items-center gap-2\"><input type=\"radio\" name=\"{}\"{}{} /> {}</label>\n",
+                        indent,
+                        name,
+                        if checked { " checked" } else { "" },
+                        if radio.disabled { " disabled" } else { "" },
+                        opt
+                    ));
+                }
+                output.push_str(&format!("{}</div>\n", indent));
+            }
+            CanvasComponent::Switch(switch) => {
+                output.push_str(&format!(
+                    "{}<label class=\"flex items-center gap-2\">\n{}  <input type=\"checkbox\" class=\"toggle\"{}{} />\n{}  <span>{}</span>\n{}</label>\n",
+                    indent,
+                    indent,
+                    if switch.checked { " checked" } else { "" },
+                    if switch.disabled { " disabled" } else { "" },
+                    indent,
+                    switch.label,
+                    indent
+                ));
+            }
+            CanvasComponent::Badge(badge) => {
+                let color = match badge.variant {
+                    crate::domain::BadgeVariant::Default => "bg-gray-100 text-gray-800",
+                    crate::domain::BadgeVariant::Primary => "bg-blue-100 text-blue-800",
+                    crate::domain::BadgeVariant::Success => "bg-green-100 text-green-800",
+                    crate::domain::BadgeVariant::Warning => "bg-amber-100 text-amber-800",
+                    crate::domain::BadgeVariant::Error => "bg-red-100 text-red-800",
+                };
+                output.push_str(&format!(
+                    "{}<span class=\"inline-block px-2 py-0.5 rounded-full text-xs font-medium {}\">{}</span>\n",
+                    indent, color, badge.text
+                ));
+            }
+            CanvasComponent::Progress(progress) => {
+                let percent = if progress.max > 0.0 {
+                    (progress.value / progress.max * 100.0).clamp(0.0, 100.0)
+                } else {
+                    0.0
+                };
+                output.push_str(&format!(
+                    "{}<div class=\"w-full bg-gray-200 rounded-full h-2\">\n{}  <div class=\"bg-blue-500 h-2 rounded-full\" style=\"width: {:.0}%\"></div>\n{}</div>\n",
+                    indent, indent, percent, indent
+                ));
+            }
         }
 
         Ok(())
@@ -1981,6 +2183,83 @@ impl SvelteGenerator {
                 output.push_str(&format!(
                     "{}<div{}{}>{{@html `{}`}}</div>\n",
                     indent, id_attr, class_attr, custom.template
+                ));
+            }
+            CanvasComponent::Divider(divider) => {
+                let style = match divider.orientation {
+                    crate::domain::DividerOrientation::Horizontal => format!(
+                        "border: none; border-top: {}px solid #e5e7eb; margin: 8px 0;",
+                        divider.thickness
+                    ),
+                    crate::domain::DividerOrientation::Vertical => format!(
+                        "border: none; border-left: {}px solid #e5e7eb; margin: 0 8px; align-self: stretch;",
+                        divider.thickness
+                    ),
+                };
+                output.push_str(&format!("{}<hr style=\"{}\" />\n", indent, style));
+            }
+            CanvasComponent::Checkbox(checkbox) => {
+                output.push_str(&format!(
+                    "{}<label>\n{}  <input type=\"checkbox\"{}{} />\n{}  {}\n{}</label>\n",
+                    indent,
+                    indent,
+                    if checkbox.checked { " checked" } else { "" },
+                    if checkbox.disabled { " disabled" } else { "" },
+                    indent,
+                    checkbox.label,
+                    indent
+                ));
+            }
+            CanvasComponent::RadioGroup(radio) => {
+                let name = format!("radio-{}", radio.id);
+                output.push_str(&format!("{}<div class=\"radio-group\">\n", indent));
+                for opt in radio
+                    .options
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    let checked = !radio.selected.is_empty() && radio.selected == opt;
+                    output.push_str(&format!(
+                        "{}  <label><input type=\"radio\" name=\"{}\"{}{} /> {}</label>\n",
+                        indent,
+                        name,
+                        if checked { " checked" } else { "" },
+                        if radio.disabled { " disabled" } else { "" },
+                        opt
+                    ));
+                }
+                output.push_str(&format!("{}</div>\n", indent));
+            }
+            CanvasComponent::Switch(switch) => {
+                output.push_str(&format!(
+                    "{}<label class=\"switch\">\n{}  <input type=\"checkbox\"{}{} />\n{}  {}\n{}</label>\n",
+                    indent,
+                    indent,
+                    if switch.checked { " checked" } else { "" },
+                    if switch.disabled { " disabled" } else { "" },
+                    indent,
+                    switch.label,
+                    indent
+                ));
+            }
+            CanvasComponent::Badge(badge) => {
+                let variant = match badge.variant {
+                    crate::domain::BadgeVariant::Default => "default",
+                    crate::domain::BadgeVariant::Primary => "primary",
+                    crate::domain::BadgeVariant::Success => "success",
+                    crate::domain::BadgeVariant::Warning => "warning",
+                    crate::domain::BadgeVariant::Error => "error",
+                };
+                output.push_str(&format!(
+                    "{}<span class=\"badge badge-{}\">{}</span>\n",
+                    indent, variant, badge.text
+                ));
+            }
+            CanvasComponent::Progress(progress) => {
+                output.push_str(&format!(
+                    "{}<progress value={{{}}} max={{{}}} style=\"width: 100%;\"></progress>\n",
+                    indent, progress.value, progress.max
                 ));
             }
         }

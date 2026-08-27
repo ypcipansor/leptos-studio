@@ -13,6 +13,7 @@ use tower_http::services::{ServeDir, ServeFile};
 mod analytics;
 mod git;
 mod templates;
+mod validation;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct ProjectMetadata {
@@ -204,6 +205,14 @@ async fn save_project(
         }
     }
 
+    // Validate serialized components before storing
+    if let Some(layout) = payload.get("layout")
+        && let Err(e) = validation::validate_layout(layout)
+    {
+        tracing::warn!("Rejecting project save: {}", e);
+        return Err(StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
     let name = payload
         .get("name")
         .and_then(|v| v.as_str())
@@ -215,8 +224,7 @@ async fn save_project(
         .unwrap_or(0.0);
     let component_count = payload
         .get("layout")
-        .and_then(|l| l.as_array())
-        .map(|a| a.len())
+        .map(validation::count_components)
         .unwrap_or(0);
 
     {

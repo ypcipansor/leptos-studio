@@ -86,6 +86,12 @@ fn TreeNode(
                     CanvasComponent::Card(_) => "Card".to_string(),
                     CanvasComponent::Select(_) => "Select".to_string(),
                     CanvasComponent::Custom(c) => format!("Custom: {}", c.name),
+                    CanvasComponent::Divider(_) => "Divider".to_string(),
+                    CanvasComponent::Checkbox(c) => format!("Checkbox: {:.20}", c.label),
+                    CanvasComponent::RadioGroup(_) => "Radio Group".to_string(),
+                    CanvasComponent::Switch(c) => format!("Switch: {:.20}", c.label),
+                    CanvasComponent::Badge(c) => format!("Badge: {:.20}", c.text),
+                    CanvasComponent::Progress(_) => "Progress".to_string(),
                 };
 
                 let icon = match &comp {
@@ -97,18 +103,24 @@ fn TreeNode(
                     CanvasComponent::Card(_) => "🃏",
                     CanvasComponent::Select(_) => "🔽",
                     CanvasComponent::Custom(_) => "⚙️",
+                    CanvasComponent::Divider(_) => "➖",
+                    CanvasComponent::Checkbox(_) => "☑️",
+                    CanvasComponent::RadioGroup(_) => "🔘",
+                    CanvasComponent::Switch(_) => "🎚️",
+                    CanvasComponent::Badge(_) => "🏷️",
+                    CanvasComponent::Progress(_) => "📊",
                 };
 
                 let on_click = move |ev: leptos::ev::MouseEvent| {
                     ev.stop_propagation();
-                    app_state.canvas.selected.set(Some(id));
+                    app_state.canvas.select_single(id);
                 };
 
                 let on_keydown = move |ev: leptos::ev::KeyboardEvent| {
                      if ev.key() == "Enter" || ev.key() == " " {
                         ev.prevent_default();
                         ev.stop_propagation();
-                        app_state.canvas.selected.set(Some(id));
+                        app_state.canvas.select_single(id);
                     }
                 };
 
