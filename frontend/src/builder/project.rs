@@ -33,7 +33,7 @@ pub fn ProjectPanel() -> impl IntoView {
     let new_project = move |_| {
         app_state.project_name.set("Untitled Project".to_string());
         app_state.canvas.components.set(Vec::new());
-        app_state.canvas.selected.set(None);
+        app_state.canvas.clear_selection();
         app_state.canvas.history.update(|h| h.clear());
         app_state.ui.notification.set(Some(Notification::info(
             "🆕 New project created".to_string(),

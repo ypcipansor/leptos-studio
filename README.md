@@ -4,13 +4,13 @@ A visual UI builder for the [Leptos](https://github.com/leptos-rs/leptos) web fr
 
 ## Features
 
-- **Visual Editor**: Drag and drop components (Buttons, Inputs, Containers, etc.) onto a canvas.
-- **Component Library**: Rich set of built-in components and support for custom templates.
+- **Visual Editor**: Drag and drop components (Buttons, Inputs, Containers, etc.) onto a canvas. Zoom (25%–400%) via toolbar, `Ctrl+scroll`, or `Ctrl+=/-/0`; pan by dragging the canvas background when zoomed. Multi-select with `Shift`/`Ctrl`+click and `Ctrl+A`. Double-click (or right-click) any component for a context menu; right-click the empty canvas for quick actions.
+- **Component Library**: Rich set of built-in components — Buttons, Text, Inputs, Selects, Images, Containers, Cards, Dividers, Checkboxes, Radio Groups, Switches, Badges, and Progress bars — plus support for custom templates.
 - **Variable Management**: Define global variables and bind them to component properties for dynamic UIs.
 - **Theme Editor**: Customize global design tokens (Colors, Typography, Spacing, Border Radius) visually.
 - **Responsive Preview**: Test your design on Mobile, Tablet, and Desktop viewports.
 - **History**: Robust Undo/Redo system with "Time Travel" to restore any previous state.
-- **Code Export**: Generate production-ready Leptos Rust code, HTML, or JSON.
+- **Code Export**: Generate production-ready Leptos Rust code, HTML, JSON, or Markdown — Plain exports embed a baseline CSS bundle.
 - **Project Management**: Create, save, and manage multiple projects.
 - **Command Palette**: Quick access to all actions via `Ctrl+K` / `Cmd+K`.
 - **Auto-Save**: Never lose your work with configurable auto-save.

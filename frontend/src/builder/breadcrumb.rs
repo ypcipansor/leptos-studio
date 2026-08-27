@@ -40,6 +40,12 @@ fn component_type_str(component: &CanvasComponent) -> String {
         ComponentType::Card => "Card".to_string(),
         ComponentType::Select => "Select".to_string(),
         ComponentType::Custom => "Custom".to_string(),
+        ComponentType::Divider => "Divider".to_string(),
+        ComponentType::Checkbox => "Checkbox".to_string(),
+        ComponentType::RadioGroup => "Radio Group".to_string(),
+        ComponentType::Switch => "Switch".to_string(),
+        ComponentType::Badge => "Badge".to_string(),
+        ComponentType::Progress => "Progress".to_string(),
     }
 }
 
@@ -59,6 +65,12 @@ fn component_name(component: &CanvasComponent) -> String {
         CanvasComponent::Card(_) => "Card".to_string(),
         CanvasComponent::Select(_) => "Select".to_string(),
         CanvasComponent::Custom(custom) => custom.name.clone(),
+        CanvasComponent::Divider(_) => "Divider".to_string(),
+        CanvasComponent::Checkbox(c) => c.label.clone(),
+        CanvasComponent::RadioGroup(_) => "Radio Group".to_string(),
+        CanvasComponent::Switch(c) => c.label.clone(),
+        CanvasComponent::Badge(c) => c.text.clone(),
+        CanvasComponent::Progress(_) => "Progress".to_string(),
     }
 }
 
@@ -135,11 +147,15 @@ pub fn BreadcrumbNavigation() -> impl IntoView {
     });
 
     let navigate_to = move |item: BreadcrumbItem| {
-        app_state.canvas.selected.set(item.id);
+        if let Some(id) = item.id {
+            app_state.canvas.select_single(id);
+        } else {
+            app_state.canvas.clear_selection();
+        }
     };
 
     view! {
-        <nav class="breadcrumb-nav flex items-center gap-1 overflow-x-auto whitespace-nowrap py-1 px-2 border-t border-gray-200 bg-white" aria-label="Component navigation">
+        <nav class="breadcrumb-nav" aria-label="Component navigation">
             <For
                 each=move || breadcrumbs.get().into_iter().enumerate()
                 key=|(i, _)| *i
@@ -150,13 +166,13 @@ pub fn BreadcrumbNavigation() -> impl IntoView {
                     view! {
                         <>
                             {move || if index > 0 {
-                                view! { <span class="text-gray-400 text-xs px-1">"/"</span> }.into_any()
+                                view! { <span class="breadcrumb-separator">"/"</span> }.into_any()
                             } else {
                                 view! { <span class="hidden"></span> }.into_any()
                             }}
 
                             <button
-                                class="breadcrumb-item flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-gray-100 transition-colors disabled:opacity-100 disabled:font-semibold disabled:text-blue-600"
+                                class="breadcrumb-item"
                                 disabled=is_last()
                                 on:click={
                                     let item = item_clone.clone();
@@ -174,7 +190,7 @@ pub fn BreadcrumbNavigation() -> impl IntoView {
                                     let display_name = item.display_name();
                                     if !item_name.is_empty() && item_name != display_name {
                                         view! {
-                                            <span class="text-[10px] text-gray-500 bg-gray-50 px-1 rounded ml-1 max-w-[80px] truncate">
+                                            <span class="breadcrumb-index">
                                                 {item_name}
                                             </span>
                                         }.into_any()

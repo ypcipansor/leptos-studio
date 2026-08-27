@@ -95,5 +95,66 @@ fn PreviewNode(component: CanvasComponent) -> impl IntoView {
                 {sel.options.split(',').map(|s| view! { <option>{s.trim().to_string()}</option> }).collect_view()}
             </select></div>
         }.into_any(),
+        CanvasComponent::Divider(divider) => {
+            let style = match divider.orientation {
+                crate::domain::DividerOrientation::Horizontal => format!(
+                    "border: none; border-top: {}px solid #e5e7eb; margin: 8px 0;",
+                    divider.thickness
+                ),
+                crate::domain::DividerOrientation::Vertical => format!(
+                    "border: none; border-left: {}px solid #e5e7eb; margin: 0 8px; align-self: stretch;",
+                    divider.thickness
+                ),
+            };
+            view! { <hr style=style /> }.into_any()
+        },
+        CanvasComponent::Checkbox(checkbox) => view! {
+            <div><label class="preview-inline-margin">
+                <input type="checkbox" checked=checkbox.checked disabled=checkbox.disabled />
+                " " {checkbox.label}
+            </label></div>
+        }.into_any(),
+        CanvasComponent::RadioGroup(radio) => {
+            let group_name = format!("preview-radio-{}", radio.id);
+            view! {
+                <div class="preview-inline-margin">
+                    {radio.options.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).map(|opt| {
+                        let checked = !radio.selected.is_empty() && radio.selected == opt;
+                        view! {
+                            <label style="display: block;">
+                                <input type="radio" name=group_name.clone() checked=checked disabled=radio.disabled />
+                                " " {opt}
+                            </label>
+                        }
+                    }).collect_view()}
+                </div>
+            }.into_any()
+        },
+        CanvasComponent::Switch(switch) => view! {
+            <div><label class="preview-inline-margin">
+                <input type="checkbox" checked=switch.checked disabled=switch.disabled />
+                " " {switch.label}
+            </label></div>
+        }.into_any(),
+        CanvasComponent::Badge(badge) => view! {
+            <span class="preview-inline-margin" style="display: inline-block; padding: 2px 8px; border-radius: 9999px; background: #e5e7eb; font-size: 12px;">{badge.text}</span>
+        }.into_any(),
+        CanvasComponent::Progress(progress) => {
+            let percent = if progress.max > 0.0 {
+                (progress.value / progress.max * 100.0).clamp(0.0, 100.0)
+            } else {
+                0.0
+            };
+            view! {
+                <div class="preview-inline-margin">
+                    <progress value=progress.value max=progress.max style="width: 100%;"></progress>
+                    {if progress.show_label {
+                        view! { <span style="font-size: 12px;">{format!("{:.0}%", percent)}</span> }.into_any()
+                    } else {
+                        ().into_any()
+                    }}
+                </div>
+            }.into_any()
+        },
     }
 }

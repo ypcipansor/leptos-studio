@@ -107,35 +107,104 @@ pub fn Canvas() -> impl IntoView {
         // Only deselect if clicking the canvas background directly
         let target = event_target::<web_sys::HtmlElement>(&ev);
         if target.id() == "main-canvas" {
-            app_state.canvas.selected.set(None);
+            app_state.canvas.clear_selection();
         }
     };
+
+    // Ctrl+scroll zooms the canvas
+    let on_wheel = move |ev: ev::WheelEvent| {
+        if ev.ctrl_key() || ev.meta_key() {
+            ev.prevent_default();
+            let factor = if ev.delta_y() < 0.0 { 1.1 } else { 1.0 / 1.1 };
+            app_state.canvas.zoom_by(factor);
+        }
+    };
+
+    // Pan by dragging the canvas background when zoomed in
+    let pan_state: RwSignal<Option<(f64, f64, f64, f64)>> = RwSignal::new(None);
+
+    let canvas_area_element = || {
+        leptos::web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.query_selector(".canvas-area").ok().flatten())
+    };
+
+    let on_pan_start = move |ev: ev::MouseEvent| {
+        if app_state.canvas.zoom.get() <= 1.0 {
+            return;
+        }
+        let target = event_target::<web_sys::HtmlElement>(&ev);
+        if target.id() != "main-canvas" {
+            return;
+        }
+        if let Some(area) = canvas_area_element() {
+            pan_state.set(Some((
+                ev.client_x() as f64,
+                ev.client_y() as f64,
+                area.scroll_left() as f64,
+                area.scroll_top() as f64,
+            )));
+        }
+    };
+
+    let on_pan_move = move |ev: ev::MouseEvent| {
+        if let Some((start_x, start_y, scroll_x, scroll_y)) = pan_state.get()
+            && let Some(area) = canvas_area_element()
+        {
+            area.set_scroll_left((scroll_x - (ev.client_x() as f64 - start_x)) as i32);
+            area.set_scroll_top((scroll_y - (ev.client_y() as f64 - start_y)) as i32);
+        }
+    };
+
+    let on_pan_end = move |_ev: ev::MouseEvent| {
+        pan_state.set(None);
+    };
+
+    // Open the context menu at the event's position; targets the closest component
+    // if any, otherwise opens the generic canvas menu.
+    let open_context_menu = Callback::new(move |ev: ev::MouseEvent| {
+        let target = event_target::<web_sys::Element>(&ev);
+
+        // Find closest component ID
+        let found_id = target
+            .closest("[data-component-id]")
+            .ok()
+            .flatten()
+            .and_then(|closest| closest.get_attribute("data-component-id"))
+            .and_then(|id_str| {
+                find_component_id_by_string(&app_state.canvas.components.get_untracked(), &id_str)
+            });
+
+        set_cm_target_id.set(found_id);
+        set_cm_position.set((ev.client_x() as f64, ev.client_y() as f64));
+        set_cm_visible.set(true);
+
+        // Also select it when a component was found
+        if let Some(id) = found_id {
+            app_state.canvas.select_single(id);
+        }
+    });
 
     // Handle context menu
     let on_context_menu = move |ev: ev::MouseEvent| {
         ev.prevent_default();
+        open_context_menu.run(ev);
+    };
+
+    // Double-click opens the context menu (instead of the old select/lock behavior)
+    let on_dblclick = move |ev: ev::MouseEvent| {
+        // Only intercept when it hits a component, so native dblclick text
+        // selection on the empty canvas keeps working
         let target = event_target::<web_sys::Element>(&ev);
-
-        // Find closest component ID
-        if let Some(closest) = target.closest("[data-component-id]").ok().flatten()
-            && let Some(id_str) = closest.get_attribute("data-component-id")
+        if target
+            .closest("[data-component-id]")
+            .ok()
+            .flatten()
+            .is_some()
         {
-            let components = app_state.canvas.components.get_untracked();
-            let found_id = find_component_id_by_string(&components, &id_str);
-
-            if let Some(id) = found_id {
-                set_cm_target_id.set(Some(id));
-                set_cm_position.set((ev.client_x() as f64, ev.client_y() as f64));
-                set_cm_visible.set(true);
-
-                // Also select it
-                app_state.canvas.selected.set(Some(id));
-                return;
-            }
+            ev.prevent_default();
         }
-
-        // If background
-        set_cm_visible.set(false);
+        open_context_menu.run(ev);
     };
 
     // Calculate width based on responsive mode
@@ -152,11 +221,17 @@ pub fn Canvas() -> impl IntoView {
 
     view! {
         <div
-            class="flex-1 bg-gray-100 relative overflow-hidden flex flex-col"
+            class="canvas-wrapper"
             on:contextmenu=on_context_menu
+            on:dblclick=on_dblclick
+            on:wheel=on_wheel
+            on:mousedown=on_pan_start
+            on:mousemove=on_pan_move
+            on:mouseup=on_pan_end
+            on:mouseleave=on_pan_end
         >
             <div
-                class="flex-1 relative overflow-auto flex flex-col items-center justify-center p-8 canvas-area"
+                class="canvas-area"
                 on:click=on_canvas_click
                 on:dragover=handle_drag_over
                 on:drop=move |ev| handle_drop(ev, None, app_state)
@@ -164,8 +239,13 @@ pub fn Canvas() -> impl IntoView {
                 <div
                     id="main-canvas"
                     node_ref=canvas_ref
-                    class="bg-white shadow-lg min-h-[600px] w-full max-w-[1024px] relative transition-all duration-300"
+                    class="canvas-surface"
+                    class:preview-active=move || app_state.ui.preview_mode.get()
                     style:width=canvas_width
+                    style:transform=move || format!("scale({})", app_state.canvas.zoom.get())
+                    style:transform-origin="top center"
+                    role="application"
+                    aria-label="Canvas editor surface"
                 >
                     {move || {
                         let components = app_state.canvas.components.get();
@@ -177,7 +257,7 @@ pub fn Canvas() -> impl IntoView {
                                         <h3>"Start from scratch"</h3>
                                         <p>"Drag components from the left sidebar or add a container to get started."</p>
                                         <button
-                                            class="btn btn-primary mt-4"
+                                            class="btn btn-primary"
                                             on:click=move |_| {
                                                 if let Some(comp) = create_canvas_component("Container") {
                                                     app_state.canvas.add_component(comp);
@@ -230,11 +310,16 @@ pub fn Canvas() -> impl IntoView {
                 })
                 on_select_parent=Callback::new(move |id| {
                      if let Some(parent_id) = find_parent_id(&app_state.canvas.components.get_untracked(), id) {
-                         app_state.canvas.selected.set(Some(parent_id));
+                         app_state.canvas.select_single(parent_id);
                      }
                 })
                 on_save_custom=Callback::new(move |id| {
                      save_custom_component(id);
+                })
+                on_add_container=Callback::new(move |_| {
+                    if let Some(comp) = create_canvas_component("Container") {
+                        app_state.canvas.add_component(comp);
+                    }
                 })
             />
         </div>

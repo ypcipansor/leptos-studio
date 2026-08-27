@@ -33,6 +33,9 @@ pub enum KeyboardAction {
     ShowShortcuts,
     MoveUp,
     MoveDown,
+    ZoomIn,
+    ZoomOut,
+    ZoomReset,
 }
 
 /// Defines a keyboard shortcut with modifiers and action
@@ -209,6 +212,33 @@ pub fn get_default_shortcuts() -> Vec<KeyboardShortcut> {
             false,
             KeyboardAction::SelectAll,
             "Select all components",
+        ),
+        KeyboardShortcut::new(
+            "=",
+            true,
+            false,
+            false,
+            false,
+            KeyboardAction::ZoomIn,
+            "Zoom in canvas",
+        ),
+        KeyboardShortcut::new(
+            "-",
+            true,
+            false,
+            false,
+            false,
+            KeyboardAction::ZoomOut,
+            "Zoom out canvas",
+        ),
+        KeyboardShortcut::new(
+            "0",
+            true,
+            false,
+            false,
+            false,
+            KeyboardAction::ZoomReset,
+            "Reset canvas zoom to 100%",
         ),
         KeyboardShortcut::new(
             "Escape",

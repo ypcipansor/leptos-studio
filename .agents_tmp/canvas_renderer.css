@@ -1,0 +1,331 @@
+
+/* ========================================
+   Canvas Renderer Component Styles
+   (styling for components rendered on the canvas)
+   ======================================== */
+
+/* --- Canvas surface & layout wrappers --- */
+.canvas-wrapper {
+    flex: 1;
+    background: var(--color-gray-100);
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.canvas-surface {
+    background: var(--color-surface);
+    box-shadow: var(--shadow-lg);
+    min-height: 600px;
+    width: 100%;
+    max-width: 1024px;
+    position: relative;
+    transition: all 0.3s ease;
+}
+
+/* --- Buttons on canvas --- */
+.canvas-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border: 1px solid transparent;
+    border-radius: var(--border-radius-lg);
+    font-weight: 500;
+    line-height: 1.5;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    font-family: inherit;
+    box-shadow: var(--shadow-sm);
+}
+
+.canvas-button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
+.btn-md {
+    padding: var(--spacing-2) var(--spacing-4);
+    font-size: var(--font-size-sm);
+}
+
+.btn-lg {
+    padding: var(--spacing-3) var(--spacing-6);
+    font-size: var(--font-size-base);
+}
+
+.btn-ghost {
+    background: transparent;
+    color: var(--color-gray-600);
+    border-color: transparent;
+    box-shadow: none;
+}
+
+.btn-ghost:hover:not(:disabled) {
+    background: var(--color-gray-100);
+    color: var(--color-gray-800);
+    box-shadow: none;
+}
+
+/* --- Text on canvas --- */
+.canvas-text {
+    display: inline-block;
+    color: var(--color-text);
+    margin: 0;
+}
+
+.text-h1, .style-heading1 {
+    font-size: var(--font-size-3xl);
+    font-weight: 700;
+    line-height: var(--line-height-3xl);
+    letter-spacing: -0.02em;
+}
+
+.text-h2, .style-heading2 {
+    font-size: var(--font-size-2xl);
+    font-weight: 600;
+    line-height: var(--line-height-2xl);
+    letter-spacing: -0.01em;
+}
+
+.text-h3, .style-heading3 {
+    font-size: var(--font-size-xl);
+    font-weight: 600;
+    line-height: var(--line-height-xl);
+}
+
+.text-p, .style-body {
+    font-size: var(--font-size-base);
+    font-weight: 400;
+    line-height: var(--line-height-base);
+}
+
+.text-span {
+    font-size: var(--font-size-sm);
+    line-height: var(--line-height-sm);
+}
+
+.style-caption {
+    font-size: var(--font-size-xs);
+    line-height: var(--line-height-xs);
+    color: var(--color-text-secondary);
+}
+
+/* --- Inputs & selects on canvas --- */
+.canvas-input,
+.canvas-select {
+    display: block;
+    width: 100%;
+    max-width: 320px;
+    padding: var(--spacing-2) var(--spacing-3);
+    border: 1px solid var(--color-gray-300);
+    border-radius: var(--border-radius-lg);
+    font-size: var(--font-size-sm);
+    font-family: inherit;
+    color: var(--color-text);
+    background: var(--color-surface);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.canvas-input:focus,
+.canvas-select:focus {
+    outline: none;
+    border-color: var(--color-primary-500);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+.canvas-input:disabled,
+.canvas-select:disabled {
+    background: var(--color-gray-100);
+    color: var(--color-gray-500);
+    cursor: not-allowed;
+}
+
+.canvas-input::placeholder {
+    color: var(--color-gray-400);
+}
+
+/* --- Layout utilities (canvas containers & property editors) --- */
+.flex-row {
+    display: flex;
+    flex-direction: row;
+}
+
+.flex-col {
+    display: flex;
+    flex-direction: column;
+}
+
+.flex-wrap {
+    flex-wrap: wrap;
+}
+
+.items-center {
+    align-items: center;
+}
+
+.items-end {
+    align-items: flex-end;
+}
+
+.gap-1 {
+    gap: var(--spacing-1);
+}
+
+.hidden {
+    display: none;
+}
+
+/* --- Container on canvas --- */
+.canvas-container {
+    display: flex;
+    gap: var(--spacing-3);
+    padding: var(--spacing-3);
+    min-height: 60px;
+    border: 1px dashed var(--color-gray-300);
+    border-radius: var(--border-radius-lg);
+    position: relative;
+    transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+/* --- Image on canvas --- */
+.canvas-image {
+    display: block;
+    border-radius: var(--border-radius-md);
+    object-fit: cover;
+}
+
+/* --- Card on canvas --- */
+.canvas-card {
+    background: var(--color-surface);
+}
+
+.canvas-card-bordered {
+    border: 1px solid var(--color-gray-200);
+}
+
+.canvas-card-empty {
+    min-height: 100px;
+}
+
+/* --- Custom component on canvas --- */
+.canvas-custom {
+    border: 1px dashed var(--color-gray-300);
+    border-radius: var(--border-radius-lg);
+    overflow: hidden;
+    background: var(--color-surface);
+}
+
+.custom-header {
+    padding: var(--spacing-2) var(--spacing-3);
+    background: var(--color-gray-50);
+    border-bottom: 1px solid var(--color-gray-200);
+}
+
+.custom-name {
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    color: var(--color-gray-700);
+}
+
+.custom-template {
+    padding: var(--spacing-3);
+}
+
+/* --- Preview mode: hide editing chrome --- */
+.preview-active .canvas-component,
+.preview-active .canvas-component:hover {
+    border-color: transparent;
+    box-shadow: none;
+}
+
+.preview-active .canvas-container {
+    border-color: transparent;
+}
+
+/* --- Context menu --- */
+.context-menu {
+    background: var(--color-surface);
+    box-shadow: var(--shadow-xl);
+    border-radius: var(--border-radius-xl);
+    border: 1px solid var(--color-gray-200);
+    padding: var(--spacing-1) 0;
+    min-width: 160px;
+}
+
+.context-menu-header {
+    padding: var(--spacing-2) var(--spacing-3);
+    font-size: var(--font-size-xs);
+    color: var(--color-gray-500);
+    font-weight: 500;
+    border-bottom: 1px solid var(--color-gray-100);
+}
+
+.context-menu-item {
+    width: 100%;
+    text-align: left;
+    padding: var(--spacing-2) var(--spacing-4);
+    font-size: var(--font-size-sm);
+    color: var(--color-gray-700);
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-2);
+    transition: background-color 0.15s ease;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    justify-content: flex-start;
+}
+
+.context-menu-item:hover:not(:disabled) {
+    background: var(--color-primary-50);
+    box-shadow: none;
+    transform: none;
+}
+
+.context-menu-item.danger {
+    color: var(--color-error-500);
+}
+
+.context-menu-item.danger:hover:not(:disabled) {
+    background: #fef2f2;
+}
+
+.context-menu-divider {
+    height: 1px;
+    background: var(--color-gray-100);
+    margin: var(--spacing-1) 0;
+}
+
+.context-menu-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9998;
+}
+
+/* --- Breadcrumb extras --- */
+.breadcrumb-index {
+    font-size: 10px;
+    color: var(--color-gray-500);
+    background: var(--color-gray-50);
+    padding: 0 var(--spacing-1);
+    border-radius: var(--border-radius-sm);
+    margin-left: var(--spacing-1);
+    max-width: 80px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.breadcrumb-separator {
+    color: var(--color-gray-400);
+    font-size: var(--font-size-xs);
+    padding: 0 var(--spacing-1);
+}
+
+.canvas-empty-state .btn {
+    margin-top: var(--spacing-4);
+}

@@ -1,8 +1,9 @@
 use crate::builder::canvas::handle_drop;
 use crate::builder::drag_drop::DropZone;
 use crate::domain::{
-    Animation, ButtonComponent, CanvasComponent, CardComponent, ContainerComponent,
-    CustomComponent, ImageComponent, InputComponent, SelectComponent, TextComponent,
+    Animation, BadgeComponent, ButtonComponent, CanvasComponent, CardComponent, CheckboxComponent,
+    ContainerComponent, CustomComponent, DividerComponent, ImageComponent, InputComponent,
+    ProgressComponent, RadioGroupComponent, SelectComponent, SwitchComponent, TextComponent,
 };
 use crate::state::{AppState, CanvasState};
 use leptos::prelude::*;
@@ -26,20 +27,17 @@ pub fn ComponentRenderer(
     let component_id = *component.id();
     let preview_mode = app_state.ui.preview_mode;
 
-    let is_selected = Memo::new(move |_| {
-        !preview_mode.get()
-            && canvas_state
-                .selected
-                .get()
-                .as_ref()
-                .map(|id| id == &component_id)
-                .unwrap_or(false)
-    });
+    let is_selected =
+        Memo::new(move |_| !preview_mode.get() && canvas_state.is_selected(component_id));
 
     let on_click = move |ev: leptos::ev::MouseEvent| {
         ev.stop_propagation();
         if !preview_mode.get() {
-            canvas_state.selected.set(Some(component_id));
+            if ev.shift_key() || ev.ctrl_key() || ev.meta_key() {
+                canvas_state.toggle_multi_select(component_id);
+            } else {
+                canvas_state.select_single(component_id);
+            }
         }
     };
 
@@ -60,6 +58,12 @@ pub fn ComponentRenderer(
         crate::domain::ComponentType::Card => "Card",
         crate::domain::ComponentType::Select => "Select",
         crate::domain::ComponentType::Custom => "Custom",
+        crate::domain::ComponentType::Divider => "Divider",
+        crate::domain::ComponentType::Checkbox => "Checkbox",
+        crate::domain::ComponentType::RadioGroup => "Radio Group",
+        crate::domain::ComponentType::Switch => "Switch",
+        crate::domain::ComponentType::Badge => "Badge",
+        crate::domain::ComponentType::Progress => "Progress",
     };
 
     view! {
@@ -67,6 +71,8 @@ pub fn ComponentRenderer(
             class=class
             on:click=on_click
             data-component-id=component_id.to_string()
+            role="listitem"
+            aria-label=component_type_label
         >
             {move || if is_selected.get() {
                 view! { <div class="selected-label">{component_type_label}</div> }.into_any()
@@ -82,6 +88,12 @@ pub fn ComponentRenderer(
                 CanvasComponent::Card(card) => render_card(card, canvas_state).into_any(),
                 CanvasComponent::Select(sel) => render_select(sel).into_any(),
                 CanvasComponent::Custom(custom) => render_custom(custom).into_any(),
+                CanvasComponent::Divider(divider) => render_divider(divider).into_any(),
+                CanvasComponent::Checkbox(checkbox) => render_checkbox(checkbox).into_any(),
+                CanvasComponent::RadioGroup(radio) => render_radio_group(radio).into_any(),
+                CanvasComponent::Switch(switch) => render_switch(switch).into_any(),
+                CanvasComponent::Badge(badge) => render_badge(badge).into_any(),
+                CanvasComponent::Progress(progress) => render_progress(progress).into_any(),
             }}
         </div>
     }
@@ -396,7 +408,7 @@ fn render_card(card: CardComponent, canvas_state: CanvasState) -> impl IntoView 
     );
 
     let border_class = if card.border {
-        "border border-gray-200"
+        "canvas-card-bordered"
     } else {
         ""
     };
@@ -422,7 +434,7 @@ fn render_card(card: CardComponent, canvas_state: CanvasState) -> impl IntoView 
                         config=None
                     >
                         <div
-                            class=format!("canvas-card bg-white {} {}", border_class, if !has_children { "min-h-[100px]" } else { "" })
+                            class=format!("canvas-card {} {}", border_class, if !has_children { "canvas-card-empty" } else { "" })
                             class:hovered=move || {
                                 if let crate::builder::drag_drop::DragState::DraggingOver { drop_zone, .. } = canvas_state.drag_state.get() {
                                     drop_zone == format!("container-{}", card_id)
@@ -459,7 +471,7 @@ fn render_card(card: CardComponent, canvas_state: CanvasState) -> impl IntoView 
                 }.into_any()
             } else {
                 view! {
-                    <div class=format!("canvas-card bg-white {}", border_class) style=style>
+                    <div class=format!("canvas-card {}", border_class) style=style>
                          <For
                             each=move || children.clone()
                             key=|comp| *comp.id()
@@ -487,6 +499,153 @@ fn render_custom(custom: CustomComponent) -> impl IntoView {
                 <span class="custom-name">{custom.name.clone()}</span>
             </div>
             <div class="custom-template" inner_html=custom.template></div>
+        </div>
+    }
+}
+
+fn render_divider(divider: DividerComponent) -> impl IntoView {
+    let anim_style = get_animation_style(&divider.animation);
+    let custom_style = divider.style.to_css_string();
+
+    let orientation_class = match divider.orientation {
+        crate::domain::DividerOrientation::Horizontal => "canvas-divider-horizontal",
+        crate::domain::DividerOrientation::Vertical => "canvas-divider-vertical",
+    };
+
+    let size_style = match divider.orientation {
+        crate::domain::DividerOrientation::Horizontal => {
+            format!("border-top-width: {}px;", divider.thickness)
+        }
+        crate::domain::DividerOrientation::Vertical => {
+            format!("border-left-width: {}px;", divider.thickness)
+        }
+    };
+
+    view! {
+        <div
+            class=format!("canvas-divider {}", orientation_class)
+            role="separator"
+            style=format!("{} {} {}", size_style, anim_style, custom_style)
+        ></div>
+    }
+}
+
+fn render_checkbox(checkbox: CheckboxComponent) -> impl IntoView {
+    let anim_style = get_animation_style(&checkbox.animation);
+    let custom_style = checkbox.style.to_css_string();
+
+    view! {
+        <label
+            class="canvas-checkbox"
+            class:disabled=checkbox.disabled
+            style=format!("{} {}", anim_style, custom_style)
+        >
+            <input type="checkbox" checked=checkbox.checked disabled=checkbox.disabled />
+            <span class="canvas-checkbox-label">{checkbox.label}</span>
+        </label>
+    }
+}
+
+fn render_radio_group(radio: RadioGroupComponent) -> impl IntoView {
+    let anim_style = get_animation_style(&radio.animation);
+    let custom_style = radio.style.to_css_string();
+    let group_name = format!("radio-group-{}", radio.id);
+    let selected = radio.selected.clone();
+    let disabled = radio.disabled;
+
+    let options: Vec<String> = radio
+        .options
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    view! {
+        <div
+            class="canvas-radio-group"
+            role="radiogroup"
+            style=format!("{} {}", anim_style, custom_style)
+        >
+            {options.into_iter().map(|opt| {
+                let is_checked = !selected.is_empty() && selected == opt;
+                let name = group_name.clone();
+                view! {
+                    <label class="canvas-radio-option" class:disabled=disabled>
+                        <input type="radio" name=name value=opt.clone() checked=is_checked disabled=disabled />
+                        <span class="canvas-radio-label">{opt.clone()}</span>
+                    </label>
+                }
+            }).collect_view()}
+        </div>
+    }
+}
+
+fn render_switch(switch: SwitchComponent) -> impl IntoView {
+    let anim_style = get_animation_style(&switch.animation);
+    let custom_style = switch.style.to_css_string();
+
+    view! {
+        <label
+            class="canvas-switch"
+            class:disabled=switch.disabled
+            style=format!("{} {}", anim_style, custom_style)
+        >
+            <span class="canvas-switch-track" class:checked=switch.checked>
+                <input type="checkbox" checked=switch.checked disabled=switch.disabled />
+                <span class="canvas-switch-thumb"></span>
+            </span>
+            <span class="canvas-switch-label">{switch.label}</span>
+        </label>
+    }
+}
+
+fn render_badge(badge: BadgeComponent) -> impl IntoView {
+    let anim_style = get_animation_style(&badge.animation);
+    let custom_style = badge.style.to_css_string();
+
+    let variant_class = match badge.variant {
+        crate::domain::BadgeVariant::Default => "badge-default",
+        crate::domain::BadgeVariant::Primary => "badge-primary",
+        crate::domain::BadgeVariant::Success => "badge-success",
+        crate::domain::BadgeVariant::Warning => "badge-warning",
+        crate::domain::BadgeVariant::Error => "badge-error",
+    };
+
+    view! {
+        <span
+            class=format!("canvas-badge {}", variant_class)
+            style=format!("{} {}", anim_style, custom_style)
+        >
+            {badge.text}
+        </span>
+    }
+}
+
+fn render_progress(progress: ProgressComponent) -> impl IntoView {
+    let anim_style = get_animation_style(&progress.animation);
+    let custom_style = progress.style.to_css_string();
+
+    let percent = if progress.max > 0.0 {
+        (progress.value / progress.max * 100.0).clamp(0.0, 100.0)
+    } else {
+        0.0
+    };
+    let label = format!("{:.0}%", percent);
+
+    view! {
+        <div
+            class="canvas-progress"
+            role="progressbar"
+            style=format!("{} {}", anim_style, custom_style)
+        >
+            <div class="canvas-progress-track">
+                <div class="canvas-progress-fill" style:width=format!("{}%", percent)></div>
+            </div>
+            {if progress.show_label {
+                view! { <span class="canvas-progress-label">{label}</span> }.into_any()
+            } else {
+                view! { <span class="hidden"></span> }.into_any()
+            }}
         </div>
     }
 }

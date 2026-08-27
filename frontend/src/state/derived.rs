@@ -43,9 +43,22 @@ pub struct TypeCounts {
     pub cards: usize,
     pub selects: usize,
     pub customs: usize,
+    pub others: usize,
 }
 
 impl TypeCounts {
+    fn merge(&mut self, other: &TypeCounts) {
+        self.buttons += other.buttons;
+        self.texts += other.texts;
+        self.inputs += other.inputs;
+        self.containers += other.containers;
+        self.images += other.images;
+        self.cards += other.cards;
+        self.selects += other.selects;
+        self.customs += other.customs;
+        self.others += other.others;
+    }
+
     pub fn total(&self) -> usize {
         self.buttons
             + self.texts
@@ -55,6 +68,7 @@ impl TypeCounts {
             + self.cards
             + self.selects
             + self.customs
+            + self.others
     }
 }
 
@@ -150,30 +164,17 @@ fn count_types_recursive(components: &[CanvasComponent]) -> TypeCounts {
             CanvasComponent::Container(container) => {
                 counts.containers += 1;
                 let child_counts = count_types_recursive(&container.children);
-                counts.buttons += child_counts.buttons;
-                counts.texts += child_counts.texts;
-                counts.inputs += child_counts.inputs;
-                counts.containers += child_counts.containers;
-                counts.images += child_counts.images;
-                counts.cards += child_counts.cards;
-                counts.selects += child_counts.selects;
-                counts.customs += child_counts.customs;
+                counts.merge(&child_counts);
             }
             CanvasComponent::Image(_) => counts.images += 1,
             CanvasComponent::Card(card) => {
                 counts.cards += 1;
                 let child_counts = count_types_recursive(&card.children);
-                counts.buttons += child_counts.buttons;
-                counts.texts += child_counts.texts;
-                counts.inputs += child_counts.inputs;
-                counts.containers += child_counts.containers;
-                counts.images += child_counts.images;
-                counts.cards += child_counts.cards;
-                counts.selects += child_counts.selects;
-                counts.customs += child_counts.customs;
+                counts.merge(&child_counts);
             }
             CanvasComponent::Select(_) => counts.selects += 1,
             CanvasComponent::Custom(_) => counts.customs += 1,
+            _ => counts.others += 1,
         }
     }
 
