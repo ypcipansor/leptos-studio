@@ -1,46 +1,66 @@
-# Leptos Studio
+# Leptos Studio — Frontend
 
-**Leptos Studio** is a comprehensive visual UI builder designed for the [Leptos](https://github.com/leptos-rs/leptos) web framework. It empowers developers to construct user interfaces visually, manage component state, and export production-ready Rust code, all within a browser-based environment.
+The Leptos Studio frontend is a [Leptos](https://github.com/leptos-rs/leptos) 0.8 application compiled to WebAssembly. It renders the entire visual builder — canvas, palette, inspector, and all editor panels — in the browser. It talks to the [backend](../backend/) over HTTP for project and template persistence.
+
+For the project overview, screenshots, and architecture, see the [root README](../README.md).
 
 ## 🚀 Features
 
 ### Visual Editor
-*   **Drag-and-Drop Canvas**: Build layouts intuitively by dragging components from the palette.
-*   **Component Library**: Includes a robust set of standard components:
-    *   **Basics**: Button, Text, Input, Image.
-    *   **Layout**: Container, Card (with built-in styling).
-    *   **Forms**: Select, Input.
-    *   **Custom**: Support for defining custom component templates.
-*   **Responsive Preview**: Test designs instantly across Desktop, Tablet, and Mobile viewports.
+*   **Drag-and-drop canvas** — drag components from the palette onto the surface.
+*   **Zoom (25%–400%)** — toolbar controls, `Ctrl+scroll`, or `Ctrl+=` / `Ctrl+-` / `Ctrl+0`; drag the canvas background to pan when zoomed in.
+*   **Multi-select** — `Shift`/`Ctrl`+click to toggle components, `Ctrl+A` to select all, `Esc` to clear.
+*   **Context menus** — right-click a component for component actions, or empty canvas space for canvas actions.
+*   **Preview mode** — hides the editing chrome so the design renders as users will see it.
+
+### Component Library
+18 built-in components, grouped into filterable categories:
+
+*   **Basic** — Button, Text, Input, Select, Badge, Progress.
+*   **Form** — Checkbox, RadioGroup, Switch.
+*   **Layout** — Container, Row, Column, Card, Divider, Div.
+*   **Media** — Image.
+*   **Typography** — Heading.
+*   **Navigation** — Link.
+*   **Custom** — components you have saved from the canvas via the context menu's **Save to Library** action.
+
+The palette supports fuzzy search across names and descriptions, and each category tab shows how many components it contains. Components saved with **Save to Library** are added to the **Custom** category immediately.
 
 ### Design & Customization
-*   **Property Editor**: Detailed control over component attributes, styling, and layout properties.
-*   **Theme Editor**: Manage global design tokens, including colors and typography.
-*   **Animation Support**: Configure animations (Fade, Slide, Bounce, etc.) directly in the editor.
-*   **Styling System**: leverage CSS variables and Flexbox layouts for responsive designs.
+*   **Property Editor** — content, layout, spacing, typography, border, effects, and animation per component.
+*   **Variable Management** — define typed global variables (string, number, boolean) and bind them to component properties.
+*   **Theme Editor** — global design tokens: colour scales, typography, spacing, and border radius, applied live.
+*   **Responsive Preview** — Mobile (375px), Mobile Landscape (667px), Tablet (768px), Tablet Landscape (1024px), and Desktop (full width).
+*   **Styling system** — design tokens exposed as CSS variables, with Flexbox-based layouts.
 
 ### Developer Tools
-*   **Code Export**: Generate idiomatic Rust/Leptos code from your visual designs.
-*   **Git Integration**: Built-in version control system (simulated via LocalStorage) allowing you to commit, view history, and restore previous states.
-*   **Undo/Redo**: Full history stack for safe experimentation.
-*   **Tree View**: Hierarchical navigation of your component structure.
-*   **Debug Panel**: Inspect internal application state and performance metrics.
+*   **Code Export** — nine formats:
+    *   *Framework code* — Leptos component, React/JSX, Svelte.
+    *   *Web output* — plain HTML, HTML + Tailwind CSS.
+    *   *Data* — raw JSON, JSON Schema, TypeScript types.
+    *   *Documentation* — Markdown.
+*   **History** — undo/redo with a full snapshot stack, plus restore-to-any-point time travel.
+*   **Git Panel** — commit layouts and browse or restore revision history. Uses the backend API when a project is server-backed, and falls back to browser LocalStorage for offline and new projects.
+*   **Command Palette** — run any action by name with `Ctrl+K`.
+*   **Layers Tree** — hierarchical component tree for selecting nested nodes.
+*   **Debug Panel** — inspect internal state and render-time metrics.
+*   **Template Gallery** — 8 built-in templates across 8 categories (Form, Hero, Navigation, Card, Dashboard, Footer, LandingPage, Custom), with search and filtering.
 
 ## 🛠️ Tech Stack
 
-*   **Language**: [Rust](https://www.rust-lang.org/) (Edition 2021)
-*   **Framework**: [Leptos](https://leptos.dev/) (CSR - Client Side Rendering)
+*   **Language**: [Rust](https://www.rust-lang.org/) (Edition 2024)
+*   **Framework**: [Leptos](https://github.com/leptos-rs/leptos) 0.8 (CSR) with `leptos_router`
 *   **Build Tool**: [Trunk](https://trunkrs.dev/)
-*   **Storage**: Browser LocalStorage (for project persistence and Git simulation)
 *   **WASM Target**: `wasm32-unknown-unknown`
+*   **Persistence**: backend HTTP API; browser LocalStorage for Git history on local projects
 
 ## 🏁 Getting Started
 
-For a detailed guide, please refer to [QUICKSTART.md](QUICKSTART.md).
+For a task-oriented walkthrough, see [QUICKSTART.md](QUICKSTART.md).
 
 ### Prerequisites
 
-*   [Rust](https://rustup.rs/) (latest stable)
+*   [Rust](https://rustup.rs/) (stable)
 *   WASM target: `rustup target add wasm32-unknown-unknown`
 *   [Trunk](https://trunkrs.dev/): `cargo install --locked trunk`
 
@@ -60,16 +80,32 @@ For a detailed guide, please refer to [QUICKSTART.md](QUICKSTART.md).
 3.  **Open the application**:
     Navigate to `http://localhost:8899` in your browser.
 
-## 📂 Project Structure
+`trunk serve` rebuilds on change but does not serve the API. Run the backend in a second terminal for project and template persistence:
 
-For an in-depth architecture overview, see [DEVELOPMENT.md](DEVELOPMENT.md).
+```bash
+cd backend && cargo run
+```
 
-*   **`src/app.rs`**: Main application entry point and layout.
-*   **`src/builder/`**: Core UI components for the builder (Canvas, Palette, Property Editor, etc.).
-*   **`src/domain/`**: Data models (Component definitions, Validation logic).
-*   **`src/services/`**: Business logic (Git, Export, Project management).
-*   **`src/state/`**: Global state management using Leptos signals.
-*   **`src/utils/`**: Helper functions and utilities.
+To serve everything from one origin instead, build with `trunk build` and run the backend from the repository root — it serves `dist/` on `http://localhost:3000`.
+
+### Running the checks
+
+```bash
+cargo fmt --all --check
+cargo clippy --all-targets -- -D warnings
+cargo test --lib
+```
+
+##  Project Structure
+
+For an in-depth architecture overview, see [ARCHITECTURE.md](ARCHITECTURE.md); for module-level API details, see [API.md](API.md).
+
+*   **`src/app.rs`**: Application entry point, routing, and top-level layout.
+*   **`src/builder/`**: Builder UI — canvas, palette, property editor, panels, and modals.
+*   **`src/domain/`**: Data models and validation rules.
+*   **`src/services/`**: Use cases — export, project, Git, and templates.
+*   **`src/state/`**: Global state built on Leptos signals.
+*   **`src/utils/`**: Helpers for clipboard, sanitisation, syntax highlighting, and formatting.
 
 ## 🤝 Contributing
 
@@ -77,4 +113,4 @@ We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guid
 
 ## 📄 License
 
-This project is licensed under the Apache-2.0 License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache-2.0 License — see the [LICENSE](LICENSE) file for details.

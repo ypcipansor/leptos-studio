@@ -1066,7 +1066,7 @@ match generator.generate(&components) {
 
 ## See Also
 
-- **[FEATURES.md](./FEATURES.md)** - Feature guide
+- **[QUICKSTART.md](./QUICKSTART.md)** - Task-oriented walkthrough
 - **[ARCHITECTURE.md](./ARCHITECTURE.md)** - Architecture overview
 - **[DEVELOPMENT.md](./DEVELOPMENT.md)** - Development guide
 - **[Leptos Docs](https://leptos.dev)** - Leptos framework documentation

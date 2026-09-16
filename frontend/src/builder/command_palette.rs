@@ -225,6 +225,9 @@ where
             >
                 <div
                     class="command-palette"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label="Command palette"
                     on:click=move |ev| ev.stop_propagation()
                     on:keydown={
                         let on_action_keydown = on_action_clone.clone();
@@ -264,9 +267,11 @@ where
                         }
                     }
                 >
+                    <h2 class="command-palette-title">"Command Palette"</h2>
                     <div class="command-palette-search">
                         <input
                             type="text"
+                            aria-label="Search commands"
                             placeholder="Search commands..."
                             prop:value=move || search.get()
                             on:input=move |ev| {

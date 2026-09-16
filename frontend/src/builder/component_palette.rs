@@ -10,15 +10,34 @@ use crate::builder::component_library::LibraryComponent;
 use crate::builder::drag_drop::{DragDropConfig, create_drag_handlers};
 use crate::state::AppState;
 
-/// Component categories for filtering
+/// Component categories for filtering.
+///
+/// Each variant except `All` and `Custom` maps to the `category` string a
+/// `LibraryComponent` declares, so a component is always reachable from the
+/// tab that names its category.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ComponentCategory {
     All,
     Basic,
     Form,
     Layout,
+    Media,
+    Typography,
+    Navigation,
     Custom,
 }
+
+/// Every category tab, in display order.
+pub const CATEGORIES: [ComponentCategory; 8] = [
+    ComponentCategory::All,
+    ComponentCategory::Basic,
+    ComponentCategory::Form,
+    ComponentCategory::Layout,
+    ComponentCategory::Media,
+    ComponentCategory::Typography,
+    ComponentCategory::Navigation,
+    ComponentCategory::Custom,
+];
 
 impl ComponentCategory {
     pub fn label(&self) -> &'static str {
@@ -27,6 +46,9 @@ impl ComponentCategory {
             ComponentCategory::Basic => "Basic",
             ComponentCategory::Form => "Form",
             ComponentCategory::Layout => "Layout",
+            ComponentCategory::Media => "Media",
+            ComponentCategory::Typography => "Typography",
+            ComponentCategory::Navigation => "Navigation",
             ComponentCategory::Custom => "Custom",
         }
     }
@@ -37,6 +59,9 @@ impl ComponentCategory {
             ComponentCategory::Basic => "🔷",
             ComponentCategory::Form => "📝",
             ComponentCategory::Layout => "📐",
+            ComponentCategory::Media => "🖼️",
+            ComponentCategory::Typography => "🔤",
+            ComponentCategory::Navigation => "🧭",
             ComponentCategory::Custom => "⚙️",
         }
     }
@@ -44,22 +69,8 @@ impl ComponentCategory {
     pub fn matches(&self, component: &LibraryComponent) -> bool {
         match self {
             ComponentCategory::All => true,
-            ComponentCategory::Basic => {
-                matches!(
-                    component.kind.as_str(),
-                    "Button" | "Text" | "Badge" | "Progress"
-                )
-            }
-            ComponentCategory::Form => {
-                matches!(
-                    component.kind.as_str(),
-                    "Input" | "Button" | "Select" | "Checkbox" | "RadioGroup" | "Switch"
-                )
-            }
-            ComponentCategory::Layout => {
-                matches!(component.kind.as_str(), "Container" | "Divider")
-            }
             ComponentCategory::Custom => component.category == "Custom",
+            other => component.category == other.label(),
         }
     }
 }
@@ -157,28 +168,17 @@ pub fn ComponentPalette() -> impl IntoView {
         components.into_iter().map(|(c, _)| c).collect::<Vec<_>>()
     });
 
-    // Category counts
+    // Category counts. Derived from `matches` so a badge always equals the
+    // number of rows the filter will actually show.
     let category_counts = Memo::new(move |_| {
         let library = app_state.ui.component_library.get();
         let mut counts = std::collections::HashMap::new();
 
-        for comp in &library {
-            let cat = if comp.category == "Custom" {
-                ComponentCategory::Custom
-            } else if matches!(comp.kind.as_str(), "Button" | "Text") {
-                ComponentCategory::Basic
-            } else if comp.kind == "Input" {
-                ComponentCategory::Form
-            } else if comp.kind == "Container" {
-                ComponentCategory::Layout
-            } else {
-                ComponentCategory::All
-            };
-
-            *counts.entry(cat).or_insert(0) += 1;
+        for cat in CATEGORIES {
+            let n = library.iter().filter(|comp| cat.matches(comp)).count();
+            counts.insert(cat, n);
         }
 
-        counts.insert(ComponentCategory::All, library.len());
         counts
     });
 
@@ -234,13 +234,7 @@ pub fn ComponentPalette() -> impl IntoView {
 
                             // Category tabs
                             <div class="palette-categories" role="tablist">
-                                {[
-                                    ComponentCategory::All,
-                                    ComponentCategory::Basic,
-                                    ComponentCategory::Form,
-                                    ComponentCategory::Layout,
-                                    ComponentCategory::Custom,
-                                ].into_iter().map(|cat| {
+                                {CATEGORIES.into_iter().map(|cat| {
                                     let cat_for_click = cat.clone();
                                     let cat_for_class = cat.clone();
                                     let cat_for_count = cat.clone();
@@ -409,5 +403,36 @@ mod tests {
         assert!(ComponentCategory::All.matches(&basic_comp));
         assert!(ComponentCategory::Basic.matches(&basic_comp));
         assert!(!ComponentCategory::Layout.matches(&basic_comp));
+    }
+
+    /// Every component in the built-in library must be reachable from at least
+    /// one non-`All` tab, and the per-category counts must partition the
+    /// library (each component counted under exactly one category tab).
+    #[test]
+    fn test_every_component_is_reachable_by_category() {
+        let library = crate::builder::component_library::builtin_library_components();
+
+        for comp in &library {
+            assert!(
+                CATEGORIES
+                    .iter()
+                    .any(|c| *c != ComponentCategory::All && c.matches(comp)),
+                "{} (category {}) is not reachable from any category tab",
+                comp.name,
+                comp.category
+            );
+        }
+
+        let per_category: usize = CATEGORIES
+            .iter()
+            .filter(|c| **c != ComponentCategory::All)
+            .map(|cat| library.iter().filter(|c| cat.matches(c)).count())
+            .sum();
+
+        assert_eq!(
+            per_category,
+            library.len(),
+            "each component must appear under exactly one category tab"
+        );
     }
 }

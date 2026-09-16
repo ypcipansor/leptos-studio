@@ -27,6 +27,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Backend validation**: `POST /api/projects` rejects serialized layouts whose component type tags
   are unknown (HTTP 422), and component counts now include nested container children.
 
+### Fixed
+
+- **Component palette category filters were unreachable.** Category matching used hardcoded
+  component-kind lists that disagreed with the `category` field each component declares, so
+  Media, Typography, and Navigation components appeared only under *All* and had no tab of their
+  own. Matching now derives from the declared category, and tabs exist for all of them.
+- **Palette badges disagreed with the filtered list.** Each tab's count is now computed with the
+  same predicate that filters the list, so the badge always matches the number of rows shown.
+- **"Save to Library" silently did nothing.** Saving a canvas component as a custom component
+  showed a success notification but only appended to `custom_components`, never to
+  `component_library`, so it never appeared in the palette. It now registers through
+  `ComponentRegistry::add_custom` and shows up under *Custom* immediately.
+- Removed the duplicate "Image" entry from the default library.
+
 ### Changed
 
 - Canvas stylesheet is now complete for all rendered components (`canvas-*` classes).

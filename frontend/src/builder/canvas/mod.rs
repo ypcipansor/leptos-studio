@@ -91,7 +91,15 @@ pub fn Canvas() -> impl IntoView {
                     props_schema: None, // Simplified
                 };
 
-                app_state.ui.custom_components.update(|c| c.push(lib_comp));
+                let mut custom = app_state.ui.custom_components.get();
+                let mut library = app_state.ui.component_library.get();
+                crate::builder::component_library::ComponentRegistry::add_custom(
+                    &mut custom,
+                    &mut library,
+                    lib_comp,
+                );
+                app_state.ui.custom_components.set(custom);
+                app_state.ui.component_library.set(library);
                 app_state
                     .ui
                     .notify(crate::state::app_state::Notification::success(format!(
@@ -231,7 +239,7 @@ pub fn Canvas() -> impl IntoView {
             on:mouseleave=on_pan_end
         >
             <div
-                class="canvas-area"
+                class="canvas-dropzone"
                 on:click=on_canvas_click
                 on:dragover=handle_drag_over
                 on:drop=move |ev| handle_drop(ev, None, app_state)

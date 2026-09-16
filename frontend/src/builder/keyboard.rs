@@ -335,8 +335,11 @@ pub fn get_default_shortcuts() -> Vec<KeyboardShortcut> {
 
 /// Global Keyboard Handler Component
 ///
-/// Listens for keyboard events globally and dispatches actions when shortcuts match.
-/// Automatically ignores events from input fields to prevent conflicts.
+/// Listens for keyboard events on `window` and dispatches actions when
+/// shortcuts match. Attaching the listener to the window rather than to a
+/// rendered element is what makes the shortcuts fire regardless of which
+/// element currently holds focus. Automatically ignores events from input
+/// fields to prevent conflicts.
 ///
 /// # Features
 /// * Global keyboard event listening
@@ -366,9 +369,8 @@ pub fn KeyboardHandler<F>(shortcuts: Vec<KeyboardShortcut>, on_action: F) -> imp
 where
     F: Fn(KeyboardAction) + 'static + Clone,
 {
-    let on_keydown = {
+    let handler = {
         let shortcuts = shortcuts.clone();
-        let on_action = on_action.clone();
         move |ev: KeyboardEvent| {
             // Don't handle shortcuts when typing in inputs
             if let Some(target) = ev.target()
@@ -394,11 +396,11 @@ where
         }
     };
 
-    view! {
-        <div
-            style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: -1;"
-            on:keydown=on_keydown
-            tabindex="-1"
-        />
-    }
+    Effect::new(move |_| {
+        let cb = handler.clone();
+        let handle = window_event_listener(leptos::ev::keydown, cb);
+        on_cleanup(move || handle.remove());
+    });
+
+    view! { <div class="keyboard-handler" aria-hidden="true"></div> }
 }

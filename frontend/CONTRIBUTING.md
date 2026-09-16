@@ -56,14 +56,14 @@ cargo fmt
 
 ### Reporting Bugs
 
-- Use the [Bug Report template](.github/ISSUE_TEMPLATE/bug_report.yml)
+- Use the [Bug Report template](../.github/ISSUE_TEMPLATE/bug_report.yml)
 - Include clear steps to reproduce
 - Provide browser/OS information
 - Add screenshots if applicable
 
 ### Suggesting Features
 
-- Use the [Feature Request template](.github/ISSUE_TEMPLATE/feature_request.yml)
+- Use the [Feature Request template](../.github/ISSUE_TEMPLATE/feature_request.yml)
 - Explain the problem you're trying to solve
 - Describe your proposed solution
 - Consider alternatives
@@ -153,7 +153,7 @@ Fixes #456
 2. **Add tests**: All new features should have tests
 3. **Pass CI**: All CI checks must pass
 4. **Keep PRs focused**: One feature/fix per PR
-5. **Fill out the template**: Use the [PR template](.github/PULL_REQUEST_TEMPLATE.md)
+5. **Fill out the template**: Use the [PR template](../.github/PULL_REQUEST_TEMPLATE.md)
 6. **Request review**: Tag maintainers for review
 7. **Address feedback**: Respond to review comments promptly
 8. **Squash commits**: We prefer clean git history

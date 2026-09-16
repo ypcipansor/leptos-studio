@@ -17,71 +17,118 @@ A comprehensive guide for contributing to and extending Leptos Studio.
 ## Project Structure
 
 ```
-leptos-studio/
+frontend/
 ├── src/
-│   ├── app.rs                      # Main application component
+│   ├── app.rs                      # Router and root application component
 │   ├── lib.rs                      # Library root
 │   │
-│   ├── domain/                     # Business logic layer
+│   ├── domain/                     # Data models
 │   │   ├── component.rs            # Component types and definitions
 │   │   ├── error.rs                # Error types
+│   │   ├── style.rs                # Styling model
 │   │   ├── validation.rs           # Validators
+│   │   ├── variable.rs             # Global variable model
 │   │   └── mod.rs                  # Domain module exports
 │   │
 │   ├── state/                      # State management
 │   │   ├── app_state.rs            # Main application state
+│   │   ├── derived.rs              # Derived/computed signals
 │   │   ├── history.rs              # Undo/redo history
-│   │   ├── persistence.rs          # LocalStorage persistence
+│   │   ├── persistence.rs          # Persistence helpers
 │   │   ├── project.rs              # Project serialization
 │   │   └── mod.rs                  # State module exports
 │   │
-│   ├── services/                   # Business logic services
-│   │   ├── export_service.rs       # Code generation
+│   ├── services/                   # Use cases and integrations
+│   │   ├── export_service.rs       # Core code generation
+│   │   ├── export_advanced.rs      # React/Vue/Svelte/Tailwind generators
 │   │   ├── git_service.rs          # Git integration
+│   │   ├── git_factory.rs          # Remote vs LocalStorage backend selection
+│   │   ├── local_storage_git.rs    # LocalStorage Git backend
+│   │   ├── remote_git.rs           # Backend-API Git backend
 │   │   ├── project_service.rs      # Project management
+│   │   ├── project_manager.rs      # Project listing and CRUD
 │   │   ├── property_service.rs     # Property updates
+│   │   ├── template_service.rs     # Built-in and custom templates
+│   │   ├── event_bus.rs            # Decoupled app events
+│   │   ├── analytics_service.rs    # Usage metrics
 │   │   └── mod.rs                  # Services module exports
 │   │
-│   ├── builder/                    # UI components
+│   ├── pages/                      # Route-level views
+│   │   ├── dashboard.rs            # Project dashboard (/)
+│   │   ├── editor.rs               # Builder editor (/editor/:id)
+│   │   ├── not_found.rs            # 404 page
+│   │   └── mod.rs                  # Pages module exports
+│   │
+│   ├── builder/                    # Builder UI components
 │   │   ├── mod.rs                  # Exports all components
-│   │   ├── canvas/
-│   │   │   ├── mod.rs              # Canvas component
-│   │   │   └── renderer.rs         # Component rendering
-│   │   ├── sidebar.rs              # Component library sidebar
-│   │   ├── property_editor.rs      # Property editing panel
-│   │   ├── preview.rs              # Live preview panel
+│   │   ├── canvas/                 # Canvas surface and rendering
+│   │   ├── component_palette.rs    # Palette with category filters
 │   │   ├── component_library.rs    # Library utilities
 │   │   ├── component_library_enhanced.rs  # Search & filtering
-│   │   ├── styling_system.rs       # Styling features
 │   │   ├── component_constraints.rs # Size & alignment rules
-│   │   ├── responsive_preview.rs   # Responsive design
-│   │   ├── design_tokens.rs        # Design system
+│   │   ├── property_editor.rs      # Property editing panel
+│   │   ├── property_editors/       # Per-type property editors
+│   │   ├── property_inputs.rs      # Shared property inputs
+│   │   ├── preview.rs              # Live preview panel
+│   │   ├── responsive_preview.rs   # Device viewport presets
+│   │   ├── breakpoint_editor.rs    # Custom breakpoints
+│   │   ├── theme_editor.rs         # Design-token theme editing
+│   │   ├── design_tokens.rs        # Design system tokens
+│   │   ├── variable_panel.rs       # Global variable management
+│   │   ├── styling_system.rs       # Styling features
+│   │   ├── tree_view.rs            # Layers tree
+│   │   ├── toolbar.rs              # Editor toolbar
+│   │   ├── status_bar.rs           # Canvas status bar
 │   │   ├── keyboard.rs             # Keyboard shortcuts
 │   │   ├── command_palette.rs      # Command palette
-│   │   ├── git_panel.rs            # Git integration UI
+│   │   ├── context_menu.rs         # Right-click menus
+│   │   ├── drag_drop.rs            # Drag & drop handling
+│   │   ├── export_modal.rs         # Export dialog
+│   │   ├── code_panel.rs           # Live code view
+│   │   ├── history_panel.rs        # Undo/redo history UI
+│   │   ├── git_panel/              # Git integration UI
 │   │   ├── project.rs              # Project management UI
 │   │   ├── debug_panel.rs          # Debug information
-│   │   ├── snackbar.rs             # Notifications
+│   │   ├── template_gallery.rs     # Template gallery
+│   │   ├── save_template_modal.rs  # Save-as-template dialog
+│   │   ├── settings_modal.rs       # Settings dialog
+│   │   ├── shortcuts_modal.rs      # Shortcut reference
+│   │   ├── welcome_modal.rs        # First-run dialog
+│   │   ├── accessibility.rs        # Accessibility helpers
 │   │   ├── breadcrumb.rs           # Navigation
-│   │   ├── drag_drop.rs            # Drag & drop handling
-│   │   └── keyboard.rs             # Keyboard shortcuts
+│   │   ├── snackbar.rs             # Notifications
+│   │   ├── hooks/                  # Shared builder hooks
+│   │   └── sidebar.rs              # Legacy standalone sidebar
 │   │
 │   └── utils/                      # Utility functions
+│       ├── async_task.rs           # Async task helpers
 │       ├── clipboard.rs            # Clipboard operations
 │       ├── dom.rs                  # DOM utilities
+│       ├── file.rs                 # File download/upload
 │       ├── format.rs               # String formatting
+│       ├── sanitize.rs             # HTML sanitisation
+│       ├── syntax_highlight.rs     # Code highlighting
 │       └── mod.rs                  # Utils module exports
 │
-├── tests/
-│   └── wasm_smoke.rs               # WASM integration tests
+├── tests/                          # Integration tests
+│   ├── wasm_smoke.rs               # WASM smoke test
+│   ├── canvas_state_test.rs        # Canvas state behaviour
+│   ├── export_tests.rs             # Export generator coverage
+│   ├── git_dirty_test.rs           # Git dirty-state tracking
+│   ├── git_flow_test.rs            # Git commit/restore flow
+│   └── accessibility_test.rs       # Accessibility assertions
 │
 ├── style.css                       # Global styles
 ├── index.html                      # Entry point
 ├── Trunk.toml                      # Trunk configuration
 ├── Cargo.toml                      # Rust dependencies
+├── API.md                          # Module-level API reference
 ├── ARCHITECTURE.md                 # Architecture overview
-├── FEATURES.md                     # Advanced features guide
-└── README.md                       # Project README
+├── CONTRIBUTING.md                 # Contribution guidelines
+├── QUICKSTART.md                   # Task-oriented walkthrough
+├── SECURITY.md                     # Security notes
+├── CHANGELOG.md                    # Changelog
+└── README.md                       # Frontend README
 ```
 
 ---
@@ -280,18 +327,23 @@ let result = my_operation(&input)?;
 ### Running Tests
 
 ```bash
-# All tests
-cargo test
+# Unit and binary tests (this is what CI runs)
+cargo test --workspace --lib --bins
 
-# Specific test
-cargo test my_test
+# A single test by name
+cargo test --lib test_category_matches
 
-# WASM tests
-cargo test --target wasm32-unknown-unknown
+# Integration tests under tests/ (native)
+cargo test --test export_tests
 
 # With output
 cargo test -- --nocapture
 ```
+
+The `tests/wasm_smoke.rs` suite is compiled for the browser with
+`wasm-bindgen-test`. Run it with `wasm-pack test --headless --chrome`, and note
+that `cargo test --target wasm32-unknown-unknown` does **not** work — the test
+harness and some dependencies do not build for that target.
 
 ### Writing Tests
 
@@ -557,7 +609,7 @@ trunk build  # Default includes debug symbols in dev
 2. **Create a feature branch**: `git checkout -b feature/my-feature`
 3. **Make changes** following code style guidelines
 4. **Write tests** for new functionality
-5. **Update documentation** (README, FEATURES, ARCHITECTURE)
+5. **Update documentation** (README, ARCHITECTURE)
 6. **Commit with descriptive messages**: `git commit -m "Add my feature"`
 7. **Push to your fork**: `git push origin feature/my-feature`
 8. **Open a Pull Request**
@@ -569,7 +621,7 @@ trunk build  # Default includes debug symbols in dev
 For questions or issues:
 
 1. Check existing issues
-2. Review documentation (README, ARCHITECTURE, FEATURES)
+2. Review documentation (README, ARCHITECTURE)
 3. Check code examples in tests/
 4. Ask in discussions
 

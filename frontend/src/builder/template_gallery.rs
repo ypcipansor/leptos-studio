@@ -42,6 +42,12 @@ pub fn TemplateGallery(
         refresh_templates();
     });
 
+    {
+        use crate::builder::hooks::use_escape_key::use_escape_key;
+        let open = RwSignal::new(true);
+        use_escape_key(open, move || on_close.run(()));
+    }
+
     // Filtered templates
     let filtered_templates = Memo::new(move |_| {
         let query = search_query.get().to_lowercase();

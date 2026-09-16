@@ -651,14 +651,6 @@ impl UiState {
                 props_schema: None,
                 description: Some("Hyperlink component".to_string()),
             },
-            LibraryComponent {
-                name: "Image".to_string(),
-                kind: "Container".to_string(),
-                template: None,
-                category: "Media".to_string(),
-                props_schema: None,
-                description: Some("Image component".to_string()),
-            },
         ]);
         components
     }
