@@ -83,10 +83,15 @@ For a task-oriented walkthrough, see [QUICKSTART.md](QUICKSTART.md).
 `trunk serve` rebuilds on change but does not serve the API. Run the backend in a second terminal for project and template persistence:
 
 ```bash
-cd backend && cargo run
+cargo run -p backend
 ```
 
-To serve everything from one origin instead, build with `trunk build` and run the backend from the repository root — it serves `dist/` on `http://localhost:3000`.
+To serve everything from one origin instead, build with `trunk build` and run that same backend command — it serves the root `dist/` on `http://localhost:3000`.
+
+The backend resolves its paths from `CARGO_MANIFEST_DIR`, never from the working directory: data
+defaults to `backend/projects.json` and assets to the root `dist/`. `cd backend && cargo run` and
+`cargo run -p backend` from the root are equivalent. `STATIC_DIR`, `DATA_FILE`,
+`TEMPLATES_FILE`, `GIT_DATA_FILE` and `ANALYTICS_DATA_FILE` override them.
 
 ### Running the checks
 

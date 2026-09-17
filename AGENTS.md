@@ -26,8 +26,15 @@ cd frontend && trunk build              # produces dist/
 
 - `trunk serve` on `:8899` serves the UI but **not** the API, so projects and templates will not
   persist.
-- `cd backend && cargo run` serves the built `dist/` and the API on `:3000`. Set
-  `DATA_FILE=backend/projects.json` (CORS is permissive in dev).
+- `cd backend && cargo run` serves the built `dist/` and the API on `:3000`. The backend resolves
+  its paths from `env!("CARGO_MANIFEST_DIR")`, never from the working directory: `DATA_FILE` defaults
+  to `backend/projects.json` and `STATIC_DIR` to the **root** `../dist`. So `cargo run -p backend`
+  from the root and `cd backend && cargo run` are equivalent — do not document one of them as
+  requiring a particular cwd. Path resolution lives in `backend/src/paths.rs` as pure `*_from`
+  functions (override + base) so it is testable without touching the environment; never call
+  `set_var` in tests, run them in parallel. `backend/src/analytics.rs`, `git.rs` and `templates.rs`
+  follow the same rule via `ANALYTICS_DATA_FILE` / `GIT_DATA_FILE` / `TEMPLATES_FILE`.
+  `Dockerfile` / `docker-compose.yml` set all five to absolute paths.
 
 ## Conventions and gotchas
 
@@ -62,7 +69,17 @@ cd frontend && trunk build              # produces dist/
   `show_export` in `EditorPage`), which is also what `use_export_actions` opens — there is no
   second local signal. Without the gate, Delete, `Ctrl+Z` and friends would edit the canvas hidden
   behind an open dialog. Any new modal must be added to that derivation and to the
-  `every_editor_modal_gates_shortcuts` test.
+  `every_editor_modal_gates_shortcuts` test — but blocking the canvas shortcuts must not block a
+  modal's *own* keyboard controls. The Command Palette is the case to watch: because `modal_open`
+  suppresses the global handler, the palette handles ArrowUp/ArrowDown/Enter/Escape itself, which
+  only works if focus is inside the dialog. It moves focus to its search input on the open edge
+  (`CommandPalette`, driven by an `Effect` + `request_animation_frame` since the node ref is only
+  populated after render), restores the previously focused element on close, and traps `Tab`. If a
+  future change drops that focus move, `Ctrl+K` silently loses every key that is not typing. The
+  per-key decisions live in the pure `palette_key_action` / `step_selection` helpers, and the DOM
+  behaviour is pinned by the `wasm_tests` module in `builder/command_palette.rs` (mounts the real
+  component under `wasm-pack test --headless --chrome`). The palette's search signal is created in
+  `EditorPage`'s body, not inside `view!`, so it survives re-renders.
 - `backend/projects.json` is tracked runtime data, not a fixture. Screenshot capture must not
   mutate it; keep demo data out of it (use a separate fixture or document the manual step).
 - Use `history_rw.get_untracked()` inside async handlers to avoid reactive-cycle panics.

@@ -4,7 +4,7 @@ use axum::{
     http::StatusCode,
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::Path as FilePath, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -18,21 +18,21 @@ pub struct GitCommit {
 // Map: ProjectID -> List of Commits
 pub type GitStore = Arc<RwLock<HashMap<String, Vec<GitCommit>>>>;
 
-fn get_data_file() -> String {
-    std::env::var("GIT_DATA_FILE").unwrap_or_else(|_| "git_data.json".to_string())
+fn get_data_file() -> std::path::PathBuf {
+    crate::paths::data_file("GIT_DATA_FILE", "git_data.json")
 }
 
 pub fn load_git_data() -> HashMap<String, Vec<GitCommit>> {
     let path = get_data_file();
-    if FilePath::new(&path).exists() {
+    if path.exists() {
         if let Ok(file) = std::fs::File::open(&path) {
             let reader = std::io::BufReader::new(file);
             if let Ok(map) = serde_json::from_reader(reader) {
-                tracing::info!("Loaded git data from {}", path);
+                tracing::info!("Loaded git data from {}", path.display());
                 return map;
             }
         }
-        tracing::error!("Failed to load git data from {}", path);
+        tracing::error!("Failed to load git data from {}", path.display());
     }
     HashMap::new()
 }

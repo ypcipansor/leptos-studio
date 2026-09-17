@@ -40,11 +40,16 @@ trunk serve
 
 The application will be available at `http://localhost:8899`.
 
-`trunk serve` does not run the API, so projects and templates will not persist. For the full experience, run the backend in a second terminal from the repository root:
+`trunk serve` does not run the API, so projects and templates will not persist. For the full experience, build the frontend and run the backend in a second terminal:
 
 ```bash
-cd backend && cargo run
+trunk build          # writes dist/ at the repository root
+cargo run -p backend # from the repository root
 ```
+
+The backend resolves `backend/projects.json` and the root `dist/` from its own
+`CARGO_MANIFEST_DIR`, so `cd backend && cargo run` works identically — the working directory does
+not matter. Use `STATIC_DIR` / `DATA_FILE` to point it somewhere else.
 
 ## Basic Usage
 
@@ -179,7 +184,7 @@ The **Debug** tab shows internal application state and render-time metrics, whic
 
 ### Projects Not Saving
 
-- Check that the backend is running (`cd backend && cargo run`), since `trunk serve` alone does not provide the API.
+- Check that the backend is running (see [Start the Development Server](#3-start-the-development-server)), since `trunk serve` alone does not provide the API.
 - Look for an error notification in the app, then check the backend log.
 
 ## Next Steps

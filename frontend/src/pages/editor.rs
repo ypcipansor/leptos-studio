@@ -59,6 +59,10 @@ pub fn EditorPage() -> impl IntoView {
     let show_template_gallery = RwSignal::new(false);
     let show_save_template = RwSignal::new(false);
 
+    // A single, stable search signal for the command palette: it must survive
+    // re-renders so the palette's focus/query state is not rebuilt underneath it.
+    let palette_search = RwSignal::new(String::new());
+
     let show_left_sidebar_mobile = RwSignal::new(false);
 
     // The Export modal is rendered from a single source of truth:
@@ -151,7 +155,7 @@ pub fn EditorPage() -> impl IntoView {
                     <CommandPalette
                         is_open=app_state.ui.show_command_palette.read_only()
                         close=app_state.ui.show_command_palette.write_only()
-                        search=RwSignal::new(String::new())
+                        search=palette_search
                         on_action=keyboard_action_handler
                     />
 

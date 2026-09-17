@@ -7,6 +7,8 @@ services:
       - "3000:3000"
     environment:
       - LEPTOS_API_URL=http://localhost:3000
+      # Absolute paths: the server must not depend on its working directory.
+      - STATIC_DIR=/app/dist
       - DATA_FILE=/app/data/projects.json
       - TEMPLATES_FILE=/app/data/templates.json
       - GIT_DATA_FILE=/app/data/git_data.json

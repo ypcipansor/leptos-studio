@@ -261,19 +261,24 @@ Leptos Studio is a Cargo workspace with two crates:
 
 ### Development
 
-Run the backend from the repository root so it can find `dist/` and the JSON data files:
-
 1. **Build the frontend:**
    ```bash
    trunk build
    ```
+   This writes `dist/` at the repository root (see `Trunk.toml`).
 
 2. **Start the backend:**
    ```bash
-   cd backend && cargo run
+   cargo run -p backend
    ```
 
 3. Open [http://localhost:3000](http://localhost:3000).
+
+The backend resolves its paths independently of the working directory: project data defaults to
+`backend/projects.json` and static assets to the root `dist/`, both derived from
+`CARGO_MANIFEST_DIR`. Running `cargo run -p backend` from the repository root and
+`cd backend && cargo run` are therefore equivalent. Override `STATIC_DIR`, `DATA_FILE`,
+`TEMPLATES_FILE`, `GIT_DATA_FILE` or `ANALYTICS_DATA_FILE` to relocate them (the containers do).
 
 For frontend work, run `trunk serve` instead. It watches sources and rebuilds on change, serving on [http://localhost:8899](http://localhost:8899); run the backend separately alongside it for persistence.
 
