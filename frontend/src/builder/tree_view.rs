@@ -92,6 +92,7 @@ fn TreeNode(
                     CanvasComponent::Switch(c) => format!("Switch: {:.20}", c.label),
                     CanvasComponent::Badge(c) => format!("Badge: {:.20}", c.text),
                     CanvasComponent::Progress(_) => "Progress".to_string(),
+                    CanvasComponent::Link(c) => format!("Link: {:.20}", c.text),
                 };
 
                 let icon = match &comp {
@@ -109,6 +110,7 @@ fn TreeNode(
                     CanvasComponent::Switch(_) => "🎚️",
                     CanvasComponent::Badge(_) => "🏷️",
                     CanvasComponent::Progress(_) => "📊",
+                    CanvasComponent::Link(_) => "🔗",
                 };
 
                 let on_click = move |ev: leptos::ev::MouseEvent| {

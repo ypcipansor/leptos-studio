@@ -45,6 +45,31 @@ cd frontend && trunk build              # produces dist/
   components unreachable outside *All*. Badge counts use the same `ComponentCategory::matches`
   predicate as the row filter; keep them in sync (see
   `test_every_component_is_reachable_by_category`).
+- `builder/component_library.rs::default_library_components()` is the **single source of truth**
+  for the live library `UiState.component_library` is seeded with. It appends Div, Heading and Link
+  to `builtin_library_components()`, so palette tests must call *it*, not
+  `builtin_library_components()`, or the three appended entries go untested.
+- A palette entry's `kind` is **not** a unique design key: Heading and Link both declare
+  `kind: "Text"`. An entry that must produce something other than the kind's default carries a
+  `template`, and `palette_drag_payload` then emits `Saved::<id>` rather than the bare kind. Adding
+  a named built-in whose design differs from its kind's default *requires* a template — a new kind
+  string alone changes nothing unless `create_canvas_component` also handles it. Link needed a real
+  `CanvasComponent::Link` because a hyperlink's `href` cannot be expressed by `TextComponent`.
+  Every `CanvasComponent` variant must be handled at all seven enumeration sites: the renderer, the
+  property editor, the tree view (label + icon), the breadcrumb, the preview, and both exporters
+  (`export_service.rs`, `export_advanced.rs`), plus `duplicate_with_new_id`.
+- `SkipLink` normalises its `target` prop: it accepts `"main-canvas"` or `"#main-canvas"` and emits
+  a single `#`. The canvas region it targets needs `tabindex="-1"` for the click handler's
+  `.focus()` to do anything. `#main-canvas` is the `<section>` in `pages/editor.rs`; the inner
+  surface that the click/pan handlers compare against is `#canvas-surface` — they must not share an
+  id. Pinned by the `wasm_tests` module in `pages/editor.rs`.
+- Browser-only tests belong in the **lib** target (`#[cfg(all(test, target_arch = "wasm32"))]`
+  modules run by `wasm-pack test --lib`). The `wasm-pack` *integration* targets
+  (`frontend/tests/*.rs`) fail with `the name 'main' is exported by multiple crates`, because
+  `lib.rs`'s `#[wasm_bindgen(start)] fn main` is compiled into them — `#[cfg(not(test))]` only
+  applies to the lib-target compilation. When mounting `EditorPage` in a test, construct
+  `AppState`/`DerivedState`/`AnalyticsService` *inside* the `mount_to` closure: `mount_to` installs
+  the global executor and the `Owner` that effects and `provide_context` need.
 - Saving a canvas component as a custom component must go through
   `ComponentRegistry::add_custom`, which writes to both `custom_components` and
   `component_library`. Writing only to `custom_components` leaves it invisible in the palette.
@@ -60,7 +85,7 @@ cd frontend && trunk build              # produces dist/
   adds the component to the canvas root (`is_palette_activation_key`). Drag handlers alone would
   make the ARIA semantics a lie.
 - `component_library` / `custom_components` are in-memory signals seeded from
-  `builtin_library_components()`; `Project` and `apply_project` do not carry them, so saved
+  `default_library_components()`; `Project` and `apply_project` do not carry them, so saved
   library entries do not survive a reload or a project reopen. The docs say so — do not claim
   otherwise without adding real serialization plus a round-trip test.
 - Modal visibility gates the global shortcuts via `KeyboardHandler`'s `modal_open` prop, derived in
@@ -80,6 +105,12 @@ cd frontend && trunk build              # produces dist/
   behaviour is pinned by the `wasm_tests` module in `builder/command_palette.rs` (mounts the real
   component under `wasm-pack test --headless --chrome`). The palette's search signal is created in
   `EditorPage`'s body, not inside `view!`, so it survives re-renders.
+- `AppState::new` skips `initialize_project_state` / `setup_auto_save` under `cfg(test)`. The
+  browser suite mounts the real app, so with a backend reachable those two would seed the canvas
+  from the newest project and auto-save over it — rewriting the tracked `backend/projects.json` as
+  a side effect of running tests. Tests must not read or write persisted data, so canvas
+  assertions compare against a snapshot taken just before the interaction (`newly_added`) instead
+  of the absolute component count. Keep the `#[cfg_attr(test, allow(dead_code))]` on both methods.
 - `backend/projects.json` is tracked runtime data, not a fixture. Screenshot capture must not
   mutate it; keep demo data out of it (use a separate fixture or document the manual step).
 - Use `history_rw.get_untracked()` inside async handlers to avoid reactive-cycle panics.

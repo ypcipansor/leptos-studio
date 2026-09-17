@@ -35,6 +35,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   own. Matching now derives from the declared category, and tabs exist for all of them.
 - **Palette badges disagreed with the filtered list.** Each tab's count is now computed with the
   same predicate that filters the list, so the badge always matches the number of rows shown.
+- **Palette entries sharing a `kind` produced the wrong component.** Heading and Link both
+  declared `kind: "Text"` and had no template, so `palette_drag_payload` emitted the bare kind and
+  `create_canvas_component("Text")` built a default paragraph: the advertised Heading became a
+  paragraph and Link became plain text. Link is now a real `CanvasComponent::Link` (with an `href`
+  the renderer and every exporter emit as an anchor), Heading carries a template that sets
+  `TextTag::H1`, and both resolve through their stable library-entry id.
+- **The skip link pointed at `##main-canvas`.** `SkipLink` interpolated `target` into `#{}` while
+  the editor passed an already-hashed `"#main-canvas"`, so the link never resolved; its target also
+  lacked `tabindex="-1"`, so the click handler's `.focus()` was a no-op. The component now strips a
+  leading `#` and the canvas region is programmatically focusable.
 - **"Save to Library" silently did nothing.** Saving a canvas component as a custom component
   showed a success notification but only appended to `custom_components`, never to
   `component_library`, so it never appeared in the palette. It now registers through
@@ -59,6 +69,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Palette rows claimed keyboard support they did not have.** The rows are focusable and exposed
   as `option`s but only had drag handlers. `Enter`/`Space` now adds the component to the canvas
   root (undoable, and selected), matching the documented behaviour.
+- **The browser test suite rewrote `backend/projects.json`.** `AppState::new` runs
+  `initialize_project_state` and `setup_auto_save`, so mounting the real app in `wasm-pack test`
+  seeded the canvas from the newest project and auto-saved over it whenever a backend was
+  reachable, mutating tracked runtime data as a side effect of running tests. Both are now skipped
+  under `cfg(test)`, and the canvas assertions compare against a pre-interaction snapshot rather
+  than an absolute component count.
 - Removed the duplicate "Image" entry from the default library.
 - `backend/projects.json` restored to its base state: the two screenshot-session demo projects
   (`Admin Dashboard Shell`, `Marketing Landing Page`) are no longer in tracked runtime data.

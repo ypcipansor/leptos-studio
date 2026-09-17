@@ -1,6 +1,6 @@
 use crate::domain::{
     ButtonComponent, CanvasComponent, ContainerComponent, CustomComponent, FlexDirection,
-    InputComponent, LayoutType, SelectComponent, TextComponent,
+    InputComponent, LayoutType, LinkComponent, SelectComponent, TextComponent, TextStyle, TextTag,
 };
 use serde::{Deserialize, Serialize};
 
@@ -689,6 +689,70 @@ pub fn builtin_library_components() -> Vec<LibraryComponent> {
     ]
 }
 
+/// Build the live default component library the editor actually installs into
+/// `UiState.component_library`.
+///
+/// This is the single source of truth for the palette's initial contents. The
+/// production state and every palette test must derive from it, so a test can
+/// never pass while the live library disagrees with the tested one. Entries that
+/// share a `kind` but must produce a different design (Heading is a heading, Link
+/// is a hyperlink) carry a `template`, which is what makes their drag payload
+/// identity-based rather than kind-based.
+pub fn default_library_components() -> Vec<LibraryComponent> {
+    let mut components = builtin_library_components();
+
+    let mut heading = TextComponent::new("Heading".to_string());
+    heading.style = TextStyle::Heading1;
+    heading.tag = TextTag::H1;
+
+    let mut div = ContainerComponent::new();
+    div.children = Vec::new();
+
+    components.extend_from_slice(&[
+        LibraryComponent {
+            id: "builtin-div".to_string(),
+            name: "Div".to_string(),
+            kind: "Container".to_string(),
+            template: Some(
+                serde_json::to_string_pretty(&CanvasComponent::Container(div))
+                    .expect("div should serialize"),
+            ),
+            category: "Layout".to_string(),
+            props_schema: None,
+            description: Some("Generic div container".to_string()),
+        },
+        LibraryComponent {
+            id: "builtin-heading".to_string(),
+            name: "Heading".to_string(),
+            kind: "Text".to_string(),
+            template: Some(
+                serde_json::to_string_pretty(&CanvasComponent::Text(heading))
+                    .expect("heading should serialize"),
+            ),
+            category: "Typography".to_string(),
+            props_schema: None,
+            description: Some("Heading text (H1-H6)".to_string()),
+        },
+        LibraryComponent {
+            id: "builtin-link".to_string(),
+            name: "Link".to_string(),
+            kind: "Link".to_string(),
+            template: Some(
+                serde_json::to_string_pretty(&CanvasComponent::Link(LinkComponent::new(
+                    "#".to_string(),
+                    "Link".to_string(),
+                )))
+                .expect("link should serialize"),
+            ),
+            category: "Navigation".to_string(),
+            props_schema: None,
+            description: Some("Hyperlink component".to_string()),
+        },
+    ]);
+
+    components
+}
+
 /// Build the drag payload a palette entry carries.
 ///
 /// Entries with a stored `template` keep their design, so the payload has to
@@ -809,6 +873,10 @@ pub fn create_canvas_component(component_type: &str) -> Option<CanvasComponent> 
         "Progress" => {
             let progress = crate::domain::ProgressComponent::new();
             Some(CanvasComponent::Progress(progress))
+        }
+        "Link" => {
+            let link = LinkComponent::new("#".to_string(), "Link".to_string());
+            Some(CanvasComponent::Link(link))
         }
         data if data.starts_with(CUSTOM_COMPONENT_PREFIX) => {
             let name = data

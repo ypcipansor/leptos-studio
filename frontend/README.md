@@ -20,8 +20,8 @@ For the project overview, screenshots, and architecture, see the [root README](.
 *   **Form** — Checkbox, RadioGroup, Switch.
 *   **Layout** — Container, Row, Column, Card, Divider, Div.
 *   **Media** — Image.
-*   **Typography** — Heading.
-*   **Navigation** — Link.
+*   **Typography** — Heading (a semantic `h1` with a template, not a default paragraph).
+*   **Navigation** — Link (a real anchor with an `href`, editable in the Properties tab and emitted as `<a href="…">` by every exporter).
 *   **Custom** — components you have saved from the canvas via the context menu's **Save to Library** action.
 
 The palette supports fuzzy search across names and descriptions, and each category tab shows how many components it contains. Components saved with **Save to Library** are added to the **Custom** category immediately; dragging one back out restores the saved design under a fresh id. Saved names are validated — trimmed, non-blank, and unique — and library entries are session-only state that a saved project does not carry.

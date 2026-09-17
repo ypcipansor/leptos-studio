@@ -132,7 +132,7 @@ pub fn Canvas() -> impl IntoView {
     let on_canvas_click = move |ev: ev::MouseEvent| {
         // Only deselect if clicking the canvas background directly
         let target = event_target::<web_sys::HtmlElement>(&ev);
-        if target.id() == "main-canvas" {
+        if target.id() == "canvas-surface" {
             app_state.canvas.clear_selection();
         }
     };
@@ -160,7 +160,7 @@ pub fn Canvas() -> impl IntoView {
             return;
         }
         let target = event_target::<web_sys::HtmlElement>(&ev);
-        if target.id() != "main-canvas" {
+        if target.id() != "canvas-surface" {
             return;
         }
         if let Some(area) = canvas_area_element() {
@@ -263,7 +263,7 @@ pub fn Canvas() -> impl IntoView {
                 on:drop=move |ev| handle_drop(ev, None, app_state)
             >
                 <div
-                    id="main-canvas"
+                    id="canvas-surface"
                     node_ref=canvas_ref
                     class="canvas-surface"
                     class:preview-active=move || app_state.ui.preview_mode.get()

@@ -1,8 +1,8 @@
 use super::property_editors::{
     BadgePropertyEditor, ButtonPropertyEditor, CardPropertyEditor, CheckboxPropertyEditor,
     ContainerPropertyEditor, CustomPropertyEditor, DividerPropertyEditor, ImagePropertyEditor,
-    InputPropertyEditor, ProgressPropertyEditor, RadioGroupPropertyEditor, SelectPropertyEditor,
-    SwitchPropertyEditor, TextPropertyEditor,
+    InputPropertyEditor, LinkPropertyEditor, ProgressPropertyEditor, RadioGroupPropertyEditor,
+    SelectPropertyEditor, SwitchPropertyEditor, TextPropertyEditor,
 };
 use crate::domain::CanvasComponent;
 use crate::state::AppState;
@@ -55,6 +55,11 @@ pub fn PropertyEditor() -> impl IntoView {
                             CanvasComponent::Text(txt) => {
                                 view! {
                                     <TextPropertyEditor id=selected_id text=txt />
+                                }.into_any()
+                            },
+                            CanvasComponent::Link(link) => {
+                                view! {
+                                    <LinkPropertyEditor id=selected_id link=link />
                                 }.into_any()
                             },
                             CanvasComponent::Input(inp) => {

@@ -5,7 +5,7 @@ use wasm_bindgen::JsCast;
 use super::history::{History, Snapshot};
 use super::persistence::Persistable;
 use super::project::Project;
-use crate::builder::component_library::{LibraryComponent, builtin_library_components};
+use crate::builder::component_library::{LibraryComponent, default_library_components};
 use crate::builder::design_tokens::DesignTokens;
 use crate::builder::drag_drop::DragState;
 use crate::domain::{CanvasComponent, ComponentId, Variable};
@@ -616,46 +616,11 @@ impl UiState {
             responsive_mode: RwSignal::new(ResponsiveMode::default()),
             canvas_zoom: RwSignal::new(1.0),
             custom_components: RwSignal::new(Vec::new()),
-            component_library: RwSignal::new(Self::default_components()),
+            component_library: RwSignal::new(default_library_components()),
             design_tokens: RwSignal::new(DesignTokens::default()),
             render_count: RwSignal::new(0),
             render_time: RwSignal::new(0.0),
         }
-    }
-
-    /// Get default component library
-    fn default_components() -> Vec<LibraryComponent> {
-        let mut components = builtin_library_components();
-        components.extend_from_slice(&[
-            LibraryComponent {
-                id: "builtin-div".to_string(),
-                name: "Div".to_string(),
-                kind: "Container".to_string(),
-                template: None,
-                category: "Layout".to_string(),
-                props_schema: None,
-                description: Some("Generic div container".to_string()),
-            },
-            LibraryComponent {
-                id: "builtin-heading".to_string(),
-                name: "Heading".to_string(),
-                kind: "Text".to_string(),
-                template: None,
-                category: "Typography".to_string(),
-                props_schema: None,
-                description: Some("Heading text (H1-H6)".to_string()),
-            },
-            LibraryComponent {
-                id: "builtin-link".to_string(),
-                name: "Link".to_string(),
-                kind: "Text".to_string(),
-                template: None,
-                category: "Navigation".to_string(),
-                props_schema: None,
-                description: Some("Hyperlink component".to_string()),
-            },
-        ]);
-        components
     }
 
     /// Show a notification
@@ -768,14 +733,25 @@ impl AppState {
         });
 
         // Attempt to load the most recent project or legacy data
-        state.initialize_project_state();
+        //
+        // Skipped under `cfg(test)`: the browser suite mounts the real app, so a
+        // reachable backend would seed the canvas from the newest project and
+        // auto-save over it, rewriting the tracked runtime data file
+        // (`backend/projects.json`). Tests must not read or write persisted data.
+        #[cfg(not(test))]
+        {
+            state.initialize_project_state();
 
-        // Setup auto-save listener
-        state.setup_auto_save();
+            // Setup auto-save listener
+            state.setup_auto_save();
+        }
 
         state
     }
 
+    /// Only reached in a real (non-test) build; `AppState::new` skips it under
+    /// `cfg(test)` so the browser suite cannot write to persisted storage.
+    #[cfg_attr(test, allow(dead_code))]
     fn setup_auto_save(&self) {
         let state = *self;
         // Debounce auto-save
@@ -810,6 +786,8 @@ impl AppState {
         });
     }
 
+    /// Only reached in a real (non-test) build; see `setup_auto_save`.
+    #[cfg_attr(test, allow(dead_code))]
     fn initialize_project_state(&self) {
         let state = *self;
         leptos::task::spawn_local(async move {

@@ -117,6 +117,7 @@ pub enum ComponentType {
     Switch,
     Badge,
     Progress,
+    Link,
 }
 
 impl std::fmt::Display for ComponentType {
@@ -975,6 +976,54 @@ impl Component for ProgressComponent {
     }
 }
 
+/// Hyperlink component
+///
+/// Text alone cannot represent a link: a hyperlink needs an `href` that the
+/// renderer, the property editor and every exporter have to emit as an anchor
+/// attribute. Rather than advertise a "Link" palette entry that silently
+/// produced a paragraph, the link is modelled as its own component.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LinkComponent {
+    pub id: ComponentId,
+    pub text: String,
+    pub href: String,
+    #[serde(default)]
+    pub animation: Option<Animation>,
+    #[serde(default)]
+    pub bindings: HashMap<String, String>,
+    #[serde(default)]
+    pub style: ComponentStyle,
+}
+
+impl LinkComponent {
+    pub fn new(href: String, text: String) -> Self {
+        Self {
+            id: ComponentId::new(),
+            text,
+            href,
+            animation: None,
+            bindings: HashMap::new(),
+            style: ComponentStyle::default(),
+        }
+    }
+}
+
+impl Component for LinkComponent {
+    fn component_type(&self) -> ComponentType {
+        ComponentType::Link
+    }
+
+    fn id(&self) -> &ComponentId {
+        &self.id
+    }
+
+    fn validate(&self) -> Result<(), ValidationError> {
+        // An empty `href` is rendered as a placeholder rather than rejected, so
+        // a link can be authored before its target is known.
+        Ok(())
+    }
+}
+
 /// Main component enum with all variants
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum CanvasComponent {
@@ -992,6 +1041,7 @@ pub enum CanvasComponent {
     Switch(SwitchComponent),
     Badge(BadgeComponent),
     Progress(ProgressComponent),
+    Link(LinkComponent),
 }
 
 impl CanvasComponent {
@@ -1011,6 +1061,7 @@ impl CanvasComponent {
             CanvasComponent::Switch(c) => c.id(),
             CanvasComponent::Badge(c) => c.id(),
             CanvasComponent::Progress(c) => c.id(),
+            CanvasComponent::Link(c) => c.id(),
         }
     }
 
@@ -1030,6 +1081,7 @@ impl CanvasComponent {
             CanvasComponent::Switch(c) => c.component_type(),
             CanvasComponent::Badge(c) => c.component_type(),
             CanvasComponent::Progress(c) => c.component_type(),
+            CanvasComponent::Link(c) => c.component_type(),
         }
     }
 
@@ -1049,6 +1101,7 @@ impl CanvasComponent {
             CanvasComponent::Switch(c) => c.validate(),
             CanvasComponent::Badge(c) => c.validate(),
             CanvasComponent::Progress(c) => c.validate(),
+            CanvasComponent::Link(c) => c.validate(),
         }
     }
 
@@ -1133,6 +1186,11 @@ impl CanvasComponent {
                 let mut new_c = c.clone();
                 new_c.id = ComponentId::new();
                 CanvasComponent::Progress(new_c)
+            }
+            CanvasComponent::Link(c) => {
+                let mut new_c = c.clone();
+                new_c.id = ComponentId::new();
+                CanvasComponent::Link(new_c)
             }
         }
     }

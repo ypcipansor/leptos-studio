@@ -720,6 +720,17 @@ impl LeptosCodeGenerator {
                     output.push_str(&format!("{}        <span>{:.0}%</span>\n", indent, percent));
                 }
             }
+            CanvasComponent::Link(link) => {
+                let href_attr = if let Some(bind) = link.bindings.get("href") {
+                    format!("href=move || {}.get()", bind)
+                } else {
+                    format!("href=\"{}\"", link.href)
+                };
+                output.push_str(&format!(
+                    "{}        <a {}>{}</a>\n",
+                    indent, href_attr, link.text
+                ));
+            }
         }
 
         Ok(())
@@ -1007,6 +1018,12 @@ impl HtmlCodeGenerator {
                     indent, progress.value, progress.max
                 ));
             }
+            CanvasComponent::Link(link) => {
+                output.push_str(&format!(
+                    "{}<a href=\"{}\">{}</a>\n",
+                    indent, link.href, link.text
+                ));
+            }
         }
 
         Ok(())
@@ -1156,6 +1173,10 @@ impl MarkdownCodeGenerator {
                     indent, progress.value, progress.max
                 ));
             }
+            CanvasComponent::Link(link) => {
+                output.push_str(&format!("{}- **Link**: {}\n", indent, link.text));
+                output.push_str(&format!("{}  - Href: {}\n", indent, link.href));
+            }
         }
 
         Ok(())
@@ -1216,6 +1237,90 @@ mod tests {
         assert!(code.contains("<!DOCTYPE html>"));
         assert!(code.contains("<body>"));
         assert!(code.contains("Hello World"));
+    }
+
+    /// A palette Heading must export a semantic heading, not a paragraph, and a
+    /// Link must export a real anchor with its href.
+    #[test]
+    fn heading_and_link_export_with_their_semantics() {
+        use crate::domain::{LinkComponent, TextStyle, TextTag};
+
+        // Resolve the components the way the palette does, so a palette entry
+        // that stops carrying its semantics fails this test too.
+        let library = crate::builder::component_library::default_library_components();
+        let drag = |name: &str| {
+            let entry = library
+                .iter()
+                .find(|c| c.name == name)
+                .unwrap_or_else(|| panic!("{name} missing from the live library"));
+            crate::builder::component_library::create_canvas_component_from_payload(
+                &crate::builder::component_library::palette_drag_payload(entry),
+                &library,
+            )
+            .unwrap_or_else(|| panic!("{name} must resolve"))
+        };
+
+        let heading = drag("Heading");
+        let link = drag("Link");
+        assert_eq!(
+            heading.component_type(),
+            crate::domain::ComponentType::Text,
+            "the palette Heading must resolve to a text component"
+        );
+        assert!(
+            matches!(&heading, CanvasComponent::Text(t) if t.tag == TextTag::H1),
+            "the palette Heading must carry an H1 tag"
+        );
+        assert!(
+            matches!(&link, CanvasComponent::Link(_)),
+            "the palette Link must resolve to a real link component"
+        );
+
+        let html = HtmlCodeGenerator
+            .generate(&[heading.clone(), link.clone()], &[])
+            .unwrap();
+        assert!(
+            html.contains("<h1>"),
+            "Heading must export as a semantic heading, got:\n{html}"
+        );
+        assert!(
+            html.contains("<a href="),
+            "Link must export as an anchor with its href, got:\n{html}"
+        );
+
+        let leptos = LeptosCodeGenerator::new(ExportPreset::Plain)
+            .generate(&[heading, link], &[])
+            .unwrap();
+        assert!(
+            leptos.contains("<a href="),
+            "the Leptos export must keep the hyperlink, got:\n{leptos}"
+        );
+        assert!(
+            leptos.contains("<h1"),
+            "the Leptos export must keep the heading semantic, got:\n{leptos}"
+        );
+
+        // A hand-built link with a real URL still round-trips its href.
+        let explicit = CanvasComponent::Link(LinkComponent::new(
+            "https://example.com".to_string(),
+            "Docs".to_string(),
+        ));
+        let html = HtmlCodeGenerator.generate(&[explicit], &[]).unwrap();
+        assert!(
+            html.contains("<a href=\"https://example.com\">Docs</a>"),
+            "Link must export as an anchor with its href, got:\n{html}"
+        );
+
+        let mut styled = TextComponent::new("Title".to_string());
+        styled.style = TextStyle::Heading1;
+        styled.tag = TextTag::H1;
+        let html = HtmlCodeGenerator
+            .generate(&[CanvasComponent::Text(styled)], &[])
+            .unwrap();
+        assert!(
+            html.contains("<h1>Title</h1>"),
+            "a styled heading must export as <h1>Title</h1>, got:\n{html}"
+        );
     }
 
     #[test]
