@@ -628,6 +628,7 @@ impl UiState {
         let mut components = builtin_library_components();
         components.extend_from_slice(&[
             LibraryComponent {
+                id: "builtin-div".to_string(),
                 name: "Div".to_string(),
                 kind: "Container".to_string(),
                 template: None,
@@ -636,6 +637,7 @@ impl UiState {
                 description: Some("Generic div container".to_string()),
             },
             LibraryComponent {
+                id: "builtin-heading".to_string(),
                 name: "Heading".to_string(),
                 kind: "Text".to_string(),
                 template: None,
@@ -644,6 +646,7 @@ impl UiState {
                 description: Some("Heading text (H1-H6)".to_string()),
             },
             LibraryComponent {
+                id: "builtin-link".to_string(),
                 name: "Link".to_string(),
                 kind: "Text".to_string(),
                 template: None,

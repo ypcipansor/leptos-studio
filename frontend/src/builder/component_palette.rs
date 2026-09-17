@@ -6,7 +6,9 @@
 
 use leptos::prelude::*;
 
-use crate::builder::component_library::{LibraryComponent, palette_drag_payload};
+use crate::builder::component_library::{
+    LibraryComponent, create_canvas_component_from_payload, palette_drag_payload,
+};
 use crate::builder::drag_drop::{DragDropConfig, create_drag_handlers};
 use crate::state::AppState;
 
@@ -73,6 +75,15 @@ impl ComponentCategory {
             other => component.category == other.label(),
         }
     }
+}
+
+/// Whether a key press on a palette row should add the component to the canvas.
+///
+/// The rows are focusable and exposed as `option`s, so Enter and Space must do
+/// something; every other key (including arrows, which the grid handles) is left
+/// alone. Kept as a named predicate so the accessibility behaviour is testable.
+pub fn is_palette_activation_key(key: &str) -> bool {
+    matches!(key, "Enter" | " " | "Spacebar")
 }
 
 /// Fuzzy search score
@@ -265,10 +276,11 @@ pub fn ComponentPalette() -> impl IntoView {
                             <div class="palette-grid" role="listbox">
                                 <For
                                     each=move || filtered_components.get()
-                                    key=|comp| format!("{}:{}", comp.kind, comp.name)
+                                    key=|comp| comp.id.clone()
                                     children=move |comp| {
                                         let comp_kind = palette_drag_payload(&comp);
                                         let comp_name = comp.name.clone();
+                                        let comp_label = comp_name.clone();
                                         let comp_desc = comp.description.clone().unwrap_or_default();
                                         let comp_category = comp.category.clone();
 
@@ -278,6 +290,34 @@ pub fn ComponentPalette() -> impl IntoView {
                                             DragDropConfig::default(),
                                         );
 
+                                        // Keyboard equivalent of dropping the row on the canvas.
+                                        // The palette rows are focusable and exposed as options, so
+                                        // Enter/Space must actually add the component: it goes to the
+                                        // root with a snapshot (undoable) and becomes the selection.
+                                        let on_keydown = {
+                                            let payload = comp_kind.clone();
+                                            move |ev: leptos::ev::KeyboardEvent| {
+                                                if !is_palette_activation_key(&ev.key()) {
+                                                    return;
+                                                }
+                                                ev.prevent_default();
+                                                let Some(component) =
+                                                    create_canvas_component_from_payload(
+                                                        &payload,
+                                                        &app_state
+                                                            .ui
+                                                            .component_library
+                                                            .get_untracked(),
+                                                    )
+                                                else {
+                                                    return;
+                                                };
+                                                let id = *component.id();
+                                                app_state.canvas.add_component(component);
+                                                app_state.canvas.select_single(id);
+                                            }
+                                        };
+
                                         view! {
                                             <div
                                                 class="palette-item"
@@ -285,8 +325,10 @@ pub fn ComponentPalette() -> impl IntoView {
                                                 on:dragstart=on_drag_start
                                                 on:drag=on_drag
                                                 on:dragend=on_drag_end
+                                                on:keydown=on_keydown
                                                 role="option"
                                                 tabindex="0"
+                                                aria-label=format!("Add {}", comp_label)
                                             >
                                                 <div class="palette-item-icon">
                                                     {component_icon(&comp.kind)}
@@ -388,6 +430,7 @@ mod tests {
     #[test]
     fn test_category_matches() {
         let basic_comp = LibraryComponent {
+            id: "test-basic".to_string(),
             name: "Button".to_string(),
             kind: "Button".to_string(),
             template: None,
@@ -399,6 +442,18 @@ mod tests {
         assert!(ComponentCategory::All.matches(&basic_comp));
         assert!(ComponentCategory::Basic.matches(&basic_comp));
         assert!(!ComponentCategory::Layout.matches(&basic_comp));
+    }
+
+    /// The palette rows are focusable `option`s, so they must be activatable
+    /// from the keyboard, not drag-only.
+    #[test]
+    fn palette_rows_are_keyboard_activatable() {
+        assert!(is_palette_activation_key("Enter"));
+        assert!(is_palette_activation_key(" "));
+        assert!(is_palette_activation_key("Spacebar"));
+        assert!(!is_palette_activation_key("ArrowDown"));
+        assert!(!is_palette_activation_key("a"));
+        assert!(!is_palette_activation_key("Tab"));
     }
 
     /// Every component in the built-in library must be reachable from at least

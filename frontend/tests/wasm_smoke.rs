@@ -14,7 +14,7 @@ fn export_service_works_in_wasm() {
     let generator = JsonCodeGenerator;
     let button = CanvasComponent::Button(ButtonComponent::new("From WASM".to_string()));
     let code = generator
-        .generate(&[button])
+        .generate(&[button], &[])
         .expect("JSON generation should succeed");
 
     assert!(code.contains("From WASM"));

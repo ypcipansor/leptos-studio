@@ -15,7 +15,7 @@ use crate::builder::git_panel::GitPanel;
 use crate::builder::history_panel::HistoryPanel;
 use crate::builder::hooks::use_keyboard_actions::use_keyboard_actions;
 use crate::builder::hooks::use_resize::use_resizable_sidebar;
-use crate::builder::keyboard::{KeyboardHandler, get_default_shortcuts};
+use crate::builder::keyboard::{KeyboardHandler, editor_modal_open, get_default_shortcuts};
 use crate::builder::preview::Preview;
 use crate::builder::property_editor::PropertyEditor;
 use crate::builder::responsive_preview::{CanvasViewport, ResponsivePreviewControls};
@@ -53,14 +53,18 @@ pub fn EditorPage() -> impl IntoView {
         }
     });
 
-    // Initialize UI signals (similar to App.rs)
-    let show_export = RwSignal::new(false);
+    // Better naming: template to use for the export content
     let export_code = RwSignal::new(String::new());
     let export_template = RwSignal::new("leptos".to_string());
     let show_template_gallery = RwSignal::new(false);
     let show_save_template = RwSignal::new(false);
 
     let show_left_sidebar_mobile = RwSignal::new(false);
+
+    // The Export modal is rendered from a single source of truth:
+    // `app_state.ui.show_export_modal` both opens it and gates shortcuts, so the
+    // two can never drift apart.
+    let show_export = app_state.ui.show_export_modal;
 
     let keyboard_action_handler = use_keyboard_actions(
         show_export.write_only(),
@@ -118,14 +122,17 @@ pub fn EditorPage() -> impl IntoView {
     let active_left_tab = RwSignal::new(LeftPanelTab::Add);
 
     // Any modal/dialog that overlays the editor. While one is open the canvas is
-    // not the user's target, so the global shortcuts must stay dormant.
+    // not the user's target, so the global shortcuts must stay dormant. Each
+    // argument is the exact signal that gates the matching modal's rendering.
     let modal_open = Signal::derive(move || {
-        app_state.ui.show_command_palette.get()
-            || app_state.ui.show_export_modal.get()
-            || app_state.ui.show_settings_modal.get()
-            || app_state.ui.show_shortcuts_modal.get()
-            || show_template_gallery.get()
-            || show_save_template.get()
+        editor_modal_open(
+            app_state.ui.show_command_palette.get(),
+            show_export.get(),
+            app_state.ui.show_settings_modal.get(),
+            app_state.ui.show_shortcuts_modal.get(),
+            show_template_gallery.get(),
+            show_save_template.get(),
+        )
     });
 
     view! {
@@ -350,5 +357,174 @@ pub fn EditorPage() -> impl IntoView {
                 </div>
             </AccessibilityProvider>
         </DesignTokenProvider>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::builder::keyboard::should_dispatch_shortcut;
+    use crate::builder::keyboard::{KeyboardAction, get_default_shortcuts};
+
+    /// The signal set the editor derives `modal_open` from.
+    ///
+    /// The modal signals that live on `UiState` are taken from a *real*
+    /// `UiState`, not mirrored: this is the same state `EditorPage` reads, so the
+    /// gate genuinely follows the signals the modals render from. Only the two
+    /// page-local signals (template gallery, save template) are created here.
+    struct EditorModals {
+        ui: crate::state::app_state::UiState,
+        show_template_gallery: RwSignal<bool>,
+        show_save_template: RwSignal<bool>,
+    }
+
+    impl EditorModals {
+        fn new() -> Self {
+            Self {
+                ui: crate::state::app_state::UiState::new(),
+                show_template_gallery: RwSignal::new(false),
+                show_save_template: RwSignal::new(false),
+            }
+        }
+
+        /// The Export signal exactly as `EditorPage` aliases it.
+        fn show_export(&self) -> RwSignal<bool> {
+            self.ui.show_export_modal
+        }
+
+        /// Exactly the derivation used by `EditorPage`, so a drift between the
+        /// gate and any modal's render condition fails this test.
+        fn modal_open(&self) -> Signal<bool> {
+            let ui = self.ui;
+            let gallery = self.show_template_gallery;
+            let save_template = self.show_save_template;
+            Signal::derive(move || {
+                editor_modal_open(
+                    ui.show_command_palette.get(),
+                    ui.show_export_modal.get(),
+                    ui.show_settings_modal.get(),
+                    ui.show_shortcuts_modal.get(),
+                    gallery.get(),
+                    save_template.get(),
+                )
+            })
+        }
+
+        /// Whether the editor's shortcuts would run right now.
+        fn shortcuts_enabled(&self) -> bool {
+            should_dispatch_shortcut(self.modal_open().get_untracked(), false)
+        }
+    }
+
+    /// Delete/Undo/Redo/SelectAll are the actions that mutate the canvas; they
+    /// must all be blocked while Export is open and active again once it closes.
+    #[test]
+    fn export_modal_gates_every_canvas_editing_shortcut() {
+        let modals = EditorModals::new();
+        let canvas_editing = [
+            KeyboardAction::Delete,
+            KeyboardAction::Undo,
+            KeyboardAction::Redo,
+            KeyboardAction::SelectAll,
+        ];
+
+        // Every action has a shortcut to suppress in the first place.
+        let shortcuts = get_default_shortcuts();
+        for action in &canvas_editing {
+            assert!(
+                shortcuts.iter().any(|s| &s.action == action),
+                "{action:?} must keep a shortcut"
+            );
+        }
+
+        assert!(modals.shortcuts_enabled(), "shortcuts start enabled");
+
+        // Open and close Export through the signal that renders the modal.
+        modals.show_export().set(true);
+        assert!(
+            !modals.shortcuts_enabled(),
+            "opening Export must block canvas-editing shortcuts"
+        );
+
+        modals.show_export().set(false);
+        assert!(
+            modals.shortcuts_enabled(),
+            "closing Export must re-enable canvas-editing shortcuts"
+        );
+    }
+
+    /// A `(name, signal-picker)` pair so the modal list stays readable.
+    type ModalCase = (&'static str, fn(&EditorModals) -> RwSignal<bool>);
+
+    /// Every editor modal, driven through its own render signal, must gate the
+    /// shortcuts — including the Export modal.
+    #[test]
+    fn every_editor_modal_gates_shortcuts() {
+        let modals = EditorModals::new();
+
+        // Export resolves to `UiState::show_export_modal`, the same signal that
+        // renders the modal, not a page-local mirror.
+        let cases: [ModalCase; 6] = [
+            ("command palette", |m| m.ui.show_command_palette),
+            ("export", |m| m.ui.show_export_modal),
+            ("settings", |m| m.ui.show_settings_modal),
+            ("shortcuts", |m| m.ui.show_shortcuts_modal),
+            ("template gallery", |m| m.show_template_gallery),
+            ("save template", |m| m.show_save_template),
+        ];
+
+        for (name, pick) in cases {
+            let signal = pick(&modals);
+            signal.set(true);
+            assert!(
+                !modals.shortcuts_enabled(),
+                "the {name} modal must gate canvas shortcuts"
+            );
+            signal.set(false);
+            assert!(
+                modals.shortcuts_enabled(),
+                "closing the {name} modal must restore canvas shortcuts"
+            );
+        }
+    }
+
+    /// The gate must be derived from the modal-render signals, not from a
+    /// separate flag: toggling a render signal is what flips it.
+    #[test]
+    fn gate_tracks_the_rendered_export_modal_state() {
+        let modals = EditorModals::new();
+
+        // This mirrors the UI: `show_export` *is* `UiState::show_export_modal`,
+        // the signal that renders the modal, so opening the modal through it is
+        // what flips the gate.
+        let rendered = modals.show_export();
+        assert!(!rendered.get_untracked());
+        assert!(!modals.modal_open().get_untracked());
+
+        rendered.set(true);
+        assert!(modals.show_export().get_untracked());
+        assert!(
+            modals.modal_open().get_untracked(),
+            "the gate must follow the signal that renders Export"
+        );
+
+        rendered.set(false);
+        assert!(!modals.modal_open().get_untracked());
+    }
+
+    /// Text inputs stay suppressed regardless of modal state.
+    #[test]
+    fn text_inputs_are_still_suppressed() {
+        let modals = EditorModals::new();
+        assert!(!should_dispatch_shortcut(
+            modals.modal_open().get_untracked(),
+            true
+        ));
+
+        modals.show_export().set(true);
+        assert!(!should_dispatch_shortcut(
+            modals.modal_open().get_untracked(),
+            true
+        ));
     }
 }

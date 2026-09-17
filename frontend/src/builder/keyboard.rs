@@ -342,6 +342,23 @@ pub fn should_dispatch_shortcut(modal_open: bool, from_text_input: bool) -> bool
     !modal_open && !from_text_input
 }
 
+/// Whether any dialog that overlays the editor is open.
+///
+/// Every argument is the *same* signal that gates the corresponding modal's own
+/// rendering in [`EditorPage`], so the shortcut gate can never disagree with
+/// what is actually on screen. Keeping the derivation in one named function lets
+/// the gating be exercised with real signals in tests.
+pub fn editor_modal_open(
+    command_palette: bool,
+    export: bool,
+    settings: bool,
+    shortcuts: bool,
+    template_gallery: bool,
+    save_template: bool,
+) -> bool {
+    command_palette || export || settings || shortcuts || template_gallery || save_template
+}
+
 /// Global Keyboard Handler Component
 ///
 /// Listens for keyboard events on `window` and dispatches actions when

@@ -41,17 +41,30 @@ cd frontend && trunk build              # produces dist/
 - Saving a canvas component as a custom component must go through
   `ComponentRegistry::add_custom`, which writes to both `custom_components` and
   `component_library`. Writing only to `custom_components` leaves it invisible in the palette.
-- A saved library entry carries the whole component as JSON on its `template` field, while its
-  `kind` only names the default shape. Dragging must therefore identify the entry, not the kind:
-  `palette_drag_payload` emits `Saved::<name>` for entries with a template, and
-  `create_canvas_component_from_payload` deserializes the template and regenerates ids. Payloads
-  that name a kind (including the built-in `Custom` placeholder) still build a default component.
-  Dropping a saved entry by its kind would silently return a blank default.
+- A library entry is identified by its `id`, not its `name`: two saved entries can share a
+  display name and a saved name can collide with a built-in. `palette_drag_payload` emits
+  `Saved::<id>` for entries with a template, and `create_canvas_component_from_payload`
+  looks the entry up by id, deserializes the template and regenerates ids (recursively).
+  Delete and rename also target by id. `id` has `#[serde(default = "new_library_id")]` so
+  project JSON written before the field existed still loads. `add_custom` and
+  `update_custom_by_index` return `LibraryNameError` for blank or duplicate (case-insensitive)
+  names instead of storing an ambiguous entry.
+- The palette rows are focusable `option`s, so they must be keyboard-activatable: `Enter`/`Space`
+  adds the component to the canvas root (`is_palette_activation_key`). Drag handlers alone would
+  make the ARIA semantics a lie.
+- `component_library` / `custom_components` are in-memory signals seeded from
+  `builtin_library_components()`; `Project` and `apply_project` do not carry them, so saved
+  library entries do not survive a reload or a project reopen. The docs say so — do not claim
+  otherwise without adding real serialization plus a round-trip test.
 - Modal visibility gates the global shortcuts via `KeyboardHandler`'s `modal_open` prop, derived in
-  `pages/editor.rs` from `show_command_palette` / `show_export_modal` / `show_settings_modal` /
-  `show_shortcuts_modal` / `show_template_gallery` / `show_save_template`. Without it, Delete,
-  `Ctrl+Z` and friends would edit the canvas hidden behind an open dialog. Any new modal must be
-  added to that derivation and to the matching `should_dispatch_shortcut` test.
+  `pages/editor.rs` from `editor_modal_open(...)`. Every argument must be the *same* signal that
+  renders the modal: the Export modal is `app_state.ui.show_export_modal` (aliased as
+  `show_export` in `EditorPage`), which is also what `use_export_actions` opens — there is no
+  second local signal. Without the gate, Delete, `Ctrl+Z` and friends would edit the canvas hidden
+  behind an open dialog. Any new modal must be added to that derivation and to the
+  `every_editor_modal_gates_shortcuts` test.
+- `backend/projects.json` is tracked runtime data, not a fixture. Screenshot capture must not
+  mutate it; keep demo data out of it (use a separate fixture or document the manual step).
 - Use `history_rw.get_untracked()` inside async handlers to avoid reactive-cycle panics.
 - `cargo test --workspace` also runs integration tests that hit the network/backend; prefer
   `--lib --bins` for a fast local loop.

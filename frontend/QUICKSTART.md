@@ -53,7 +53,7 @@ cd backend && cargo run
 1. Open the **Add** tab in the sidebar.
 2. Filter by category if you like — **All**, **Basic**, **Form**, **Layout**, **Media**, **Typography**, **Navigation**, or **Custom**. Each tab shows its component count.
 3. Use the search box to filter by name or description.
-4. **Drag** a component onto the canvas, or click it to place it.
+4. **Drag** a component onto the canvas, or focus it with `Tab` and press `Enter` or `Space` to add it to the canvas root.
 
 ### 2. Edit Component Properties
 
@@ -69,11 +69,11 @@ Turn any component you have already styled into a reusable custom component:
 
 1. Right-click the component on the canvas.
 2. Choose **"💾 Save to Library"**.
-3. Enter a name when prompted.
+3. Enter a name when prompted. Names are trimmed, must not be blank, and must be unique — a duplicate (including one that matches a built-in component) is rejected with a notification rather than creating an ambiguous entry.
 
-The component is added to the **Custom** category in the palette, and you can drop copies onto the canvas from there. The **All** count increases to match.
+The component is added to the **Custom** category in the palette, and you can drag it onto the canvas (or focus it and press `Enter`/`Space`) to drop a copy that keeps the saved design. The **All** count increases to match.
 
-Note that saved components live in the current browser session, so save the project (or export it) if you want to keep them.
+Saved library entries live only in the current browser session: `component_library` and `custom_components` are in-memory state, and a saved project stores only the components on the canvas, not the library. Reloading the page — or reopening the project — resets the library to the built-ins, so a saved entry disappears unless you re-save the component. Export the component's design, or keep a copy on the canvas, if you want it to survive.
 
 ### 4. Preview on Different Devices
 

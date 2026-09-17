@@ -198,7 +198,8 @@ Unknown routes render a styled fallback rather than a blank page.
 ### 🧩 Component Library
 - 18 built-in components across Basic, Form, Layout, Media, Typography, and Navigation categories — buttons, text, headings, links, inputs, selects, checkboxes, radio groups, switches, images, containers, rows/columns, cards, dividers, badges, and progress bars
 - Search and category filters in the palette, with per-category counts that match the rows shown
-- Save any canvas component to the **Custom** category via right-click → *Save to Library*, then reuse it like a built-in
+- Drag a component onto the canvas, or focus a palette row and press `Enter`/`Space` to add it to the canvas root
+- Save any canvas component to the **Custom** category via right-click → *Save to Library*, then drag copies back out with the saved design intact. Library entries are session-only: they are not written to the saved project
 - Save any design as a reusable custom template
 
 ### 🎛️ Design & Customization
@@ -296,7 +297,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --lib --bins
 ```
 
-The suite covers 107 unit tests across the domain models, validation, sanitisation, syntax highlighting, and formatting utilities.
+The suite covers the domain models, validation, sanitisation, syntax highlighting, export codegen, the component library, and formatting utilities. The browser-only `wasm_smoke` suite is not part of this command; see [frontend/DEVELOPMENT.md](frontend/DEVELOPMENT.md) for how to run it.
 
 ## ⌨️ Keyboard Shortcuts
 

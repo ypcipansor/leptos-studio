@@ -42,14 +42,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Saved components lost their design when reused.** A saved entry kept the full component as
   JSON in its `template`, but dragging it back into the canvas rebuilt a default component from
   its `kind`, discarding every property, style, and child. The drag payload now identifies the
-  saved entry (`Saved::<name>`) and the canvas deserializes its template with fresh ids, for every
-  component type.
+  saved entry by its new stable `id` (`Saved::<id>`) and the canvas deserializes its template with
+  fresh ids, for every component type. Names are no longer used as identity, so two saved entries
+  with the same display name — or a saved name that collides with a built-in — each resolve to
+  their own design, and delete/rename target the right entry.
+- **Saved-component names were unvalidated.** `add_custom` and `update_custom_by_index` now trim
+  the name and reject blank or duplicate (case-insensitive) names with a notification instead of
+  storing an entry the palette could not tell apart.
 - **Keyboard shortcuts mutated the canvas behind an open modal.** The global keydown listener only
   ignored events from text inputs, so Delete, `Ctrl+Z`, and `Ctrl+A` still edited the hidden canvas
   while Export, Settings, Shortcuts, Template Gallery, Command Palette, or the save-template dialog
-  was open. `KeyboardHandler` now takes a `modal_open` signal and stays dormant while any dialog is
-  visible.
+  was open. `KeyboardHandler` now takes a `modal_open` signal derived from the *same* signals that
+  render each modal and stays dormant while any dialog is visible. The Export modal previously had
+  two signals — a local `show_export` and `app_state.ui.show_export_modal` — and the gate watched
+  the wrong one; they are consolidated onto `app_state.ui.show_export_modal`.
+- **Palette rows claimed keyboard support they did not have.** The rows are focusable and exposed
+  as `option`s but only had drag handlers. `Enter`/`Space` now adds the component to the canvas
+  root (undoable, and selected), matching the documented behaviour.
 - Removed the duplicate "Image" entry from the default library.
+- `backend/projects.json` restored to its base state: the two screenshot-session demo projects
+  (`Admin Dashboard Shell`, `Marketing Landing Page`) are no longer in tracked runtime data.
+
+### Documentation
+
+- Corrected the click-to-place claim (`frontend/QUICKSTART.md`) to the actual keyboard activation,
+  and stated explicitly that **Save to Library** entries are session-only — a saved project carries
+  the canvas layout but not the library — across `README.md`, `frontend/README.md`,
+  `frontend/QUICKSTART.md`, and `AGENTS.md`. Removed the stale static unit-test count from the
+  root README.
 
 ### Changed
 
@@ -59,7 +79,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
-- Frontend: 102 unit tests green, `wasm_smoke` browser test added, export regression test covering
-  all components across generators.
-- Backend: new validation module with 5 unit tests.
+- Frontend: unit tests green, `wasm_smoke` browser test added, export regression test covering
+  all components across generators. New regression tests cover the saved-component id round trip
+  (same-named entries, a saved name shadowing a built-in, nested container/card id regeneration,
+  rename/delete targeting), name validation, palette keyboard activation, and modal gating of the
+  canvas shortcuts (Export included) driven through the real modal signals.
+- Backend: validation module with its own unit tests.
 - CI runs `cargo fmt`, `cargo clippy --all-targets` and unit tests; WASM artifacts uploaded.
