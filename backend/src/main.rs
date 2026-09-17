@@ -5,13 +5,14 @@ use axum::{
     routing::{delete, get},
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, net::SocketAddr, path::Path as FilePath, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 
 mod analytics;
 mod git;
+mod paths;
 mod templates;
 mod validation;
 
@@ -25,22 +26,22 @@ struct ProjectMetadata {
 
 type Store = Arc<RwLock<HashMap<String, serde_json::Value>>>;
 
-fn get_data_file() -> String {
-    std::env::var("DATA_FILE").unwrap_or_else(|_| "projects.json".to_string())
+fn get_data_file() -> std::path::PathBuf {
+    paths::data_file("DATA_FILE", "projects.json")
 }
 
 // Load store synchronously at startup (acceptable blocking)
 fn load_store() -> HashMap<String, serde_json::Value> {
     let path = get_data_file();
-    if FilePath::new(&path).exists() {
+    if path.exists() {
         if let Ok(file) = std::fs::File::open(&path) {
             let reader = std::io::BufReader::new(file);
             if let Ok(map) = serde_json::from_reader(reader) {
-                tracing::info!("Loaded projects from {}", path);
+                tracing::info!("Loaded projects from {}", path.display());
                 return map;
             }
         }
-        tracing::error!("Failed to load projects from {}", path);
+        tracing::error!("Failed to load projects from {}", path.display());
     }
     HashMap::new()
 }
@@ -122,9 +123,13 @@ async fn main() {
         )
         .with_state(analytics_store);
 
-    // Serve frontend static files
-    // Fallback to index.html for SPA routing
-    let static_files = ServeDir::new("dist").fallback(ServeFile::new("dist/index.html"));
+    // Serve frontend static files, resolved against the repository root so the
+    // backend works from any working directory. Fallback to index.html for SPA
+    // routing.
+    let static_dir = paths::static_dir();
+    tracing::info!("Serving static files from {}", static_dir.display());
+    let static_files =
+        ServeDir::new(&static_dir).fallback(ServeFile::new(static_dir.join("index.html")));
 
     let app = Router::new()
         .merge(project_routes)

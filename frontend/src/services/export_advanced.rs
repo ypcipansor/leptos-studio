@@ -34,8 +34,24 @@ impl CodeGenerator for JsonSchemaGenerator {
                         { "$ref": "#/definitions/ImageComponent" },
                         { "$ref": "#/definitions/CardComponent" },
                         { "$ref": "#/definitions/SelectComponent" },
-                        { "$ref": "#/definitions/CustomComponent" }
+                        { "$ref": "#/definitions/CustomComponent" },
+                        { "$ref": "#/definitions/LinkComponent" }
                     ]
+                },
+                "LinkComponent": {
+                    "type": "object",
+                    "required": ["Link"],
+                    "properties": {
+                        "Link": {
+                            "type": "object",
+                            "required": ["id", "text", "href"],
+                            "properties": {
+                                "id": { "type": "string", "format": "uuid" },
+                                "text": { "type": "string" },
+                                "href": { "type": "string" }
+                            }
+                        }
+                    }
                 },
                 "SelectComponent": {
                     "type": "object",
@@ -372,6 +388,13 @@ export interface CardComponent {
   border_radius: number;
 }
 
+// Link component
+export interface LinkComponent {
+  id: ComponentId;
+  text: string;
+  href: string;
+}
+
 // Canvas component union type
 export type CanvasComponent = 
   | { Button: ButtonComponent }
@@ -381,7 +404,8 @@ export type CanvasComponent =
   | { Image: ImageComponent }
   | { Card: CardComponent }
   | { Select: SelectComponent }
-  | { Custom: CustomComponent };
+  | { Custom: CustomComponent }
+  | { Link: LinkComponent };
 
 // Layout type (array of components)
 export type Layout = CanvasComponent[];
@@ -910,6 +934,12 @@ impl ReactGenerator {
                     indent, progress.value, progress.max
                 ));
             }
+            CanvasComponent::Link(link) => {
+                output.push_str(&format!(
+                    "{}<a href=\"{}\">{}</a>\n",
+                    indent, link.href, link.text
+                ));
+            }
         }
 
         Ok(())
@@ -1301,6 +1331,12 @@ impl VueGenerator {
                 output.push_str(&format!(
                     "{}<progress :value=\"{}\" :max=\"{}\" style=\"width: 100%;\"></progress>\n",
                     indent, progress.value, progress.max
+                ));
+            }
+            CanvasComponent::Link(link) => {
+                output.push_str(&format!(
+                    "{}<a href=\"{}\">{}</a>\n",
+                    indent, link.href, link.text
                 ));
             }
         }
@@ -1786,6 +1822,12 @@ impl TailwindHtmlGenerator {
                     indent, indent, percent, indent
                 ));
             }
+            CanvasComponent::Link(link) => {
+                output.push_str(&format!(
+                    "{}<a href=\"{}\" class=\"text-blue-600 underline hover:text-blue-800\">{}</a>\n",
+                    indent, link.href, link.text
+                ));
+            }
         }
 
         Ok(())
@@ -2260,6 +2302,12 @@ impl SvelteGenerator {
                 output.push_str(&format!(
                     "{}<progress value={{{}}} max={{{}}} style=\"width: 100%;\"></progress>\n",
                     indent, progress.value, progress.max
+                ));
+            }
+            CanvasComponent::Link(link) => {
+                output.push_str(&format!(
+                    "{}<a href=\"{}\">{}</a>\n",
+                    indent, link.href, link.text
                 ));
             }
         }

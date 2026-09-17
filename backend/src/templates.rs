@@ -4,7 +4,7 @@ use axum::{
     http::StatusCode,
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::Path as FilePath, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 
 // Match frontend TemplateCategory enum
@@ -33,21 +33,21 @@ pub struct Template {
 
 pub type TemplateStore = Arc<RwLock<HashMap<String, Template>>>;
 
-fn get_data_file() -> String {
-    std::env::var("TEMPLATES_FILE").unwrap_or_else(|_| "templates.json".to_string())
+fn get_data_file() -> std::path::PathBuf {
+    crate::paths::data_file("TEMPLATES_FILE", "templates.json")
 }
 
 pub fn load_templates() -> HashMap<String, Template> {
     let path = get_data_file();
-    if FilePath::new(&path).exists() {
+    if path.exists() {
         if let Ok(file) = std::fs::File::open(&path) {
             let reader = std::io::BufReader::new(file);
             if let Ok(map) = serde_json::from_reader(reader) {
-                tracing::info!("Loaded templates from {}", path);
+                tracing::info!("Loaded templates from {}", path.display());
                 return map;
             }
         }
-        tracing::error!("Failed to load templates from {}", path);
+        tracing::error!("Failed to load templates from {}", path.display());
     }
     HashMap::new()
 }

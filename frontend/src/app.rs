@@ -4,6 +4,7 @@ use leptos_router::path;
 
 use crate::pages::dashboard::DashboardPage;
 use crate::pages::editor::EditorPage;
+use crate::pages::not_found::NotFoundPage;
 use crate::services::analytics_service::AnalyticsService;
 use crate::services::event_bus::EventBus;
 use crate::services::template_service::TemplateService;
@@ -29,7 +30,7 @@ pub fn App() -> impl IntoView {
 
     view! {
         <Router>
-            <Routes fallback=|| view! { "404 Not Found" }>
+            <Routes fallback=|| view! { <NotFoundPage /> }>
                 <Route path=path!("/") view=DashboardPage />
                 <Route path=path!("/editor/:id") view=EditorPage />
             </Routes>

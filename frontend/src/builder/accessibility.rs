@@ -103,7 +103,8 @@ pub fn LiveRegion() -> impl IntoView {
 /// Skip link for keyboard users to bypass navigation
 #[component]
 pub fn SkipLink(
-    /// Target element ID to skip to
+    /// Target element ID to skip to. Accepts either a bare id (`"main-canvas"`)
+    /// or an already-hashed one (`"#main-canvas"`); both resolve to `#main-canvas`.
     #[prop(into)]
     target: String,
     /// Link text (alias for text prop)
@@ -111,16 +112,19 @@ pub fn SkipLink(
     label: Option<String>,
 ) -> impl IntoView {
     let text = label.unwrap_or_else(|| "Skip to main content".to_string());
+    let id = target.strip_prefix('#').unwrap_or(&target).to_string();
+    let href = format!("#{}", id);
+    let focus_target = id.clone();
 
     view! {
         <a
-            href=format!("#{}", target)
+            href=href
             class="skip-link"
             on:click=move |ev| {
                 ev.prevent_default();
                 if let Some(window) = web_sys::window()
                     && let Some(document) = window.document()
-                        && let Some(element) = document.get_element_by_id(&target) {
+                        && let Some(element) = document.get_element_by_id(&focus_target) {
                             let _ = element.dyn_into::<HtmlElement>().map(|el| el.focus());
                         }
             }

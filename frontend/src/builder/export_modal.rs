@@ -10,6 +10,10 @@ pub fn ExportModal(
     on_close: Callback<(), ()>,
     notification_signal: RwSignal<Option<Notification>>,
 ) -> impl IntoView {
+    use crate::builder::hooks::use_escape_key::use_escape_key;
+
+    use_escape_key(show, move || on_close.run(()));
+
     let copy_handler = move |_| {
         let code_text = code.get();
         let notif_signal = notification_signal;
@@ -76,10 +80,11 @@ pub fn ExportModal(
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="export-dialog-title"
+                on:click=move |_| on_close.run(())
             >
-                <div class="modal-content">
+                <div class="modal-content" on:click=move |ev: web_sys::MouseEvent| ev.stop_propagation()>
                     <h3 id="export-dialog-title">{"Export Code"}</h3>
-                    <label for="export-format" class="visually-hidden">{"Export format"}</label>
+                    <label for="export-format" class="export-format-label">{"Export format"}</label>
                     <select
                         id="export-format"
                         prop:value=format

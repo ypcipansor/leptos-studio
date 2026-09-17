@@ -27,6 +27,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Backend validation**: `POST /api/projects` rejects serialized layouts whose component type tags
   are unknown (HTTP 422), and component counts now include nested container children.
 
+### Fixed
+
+- **Component palette category filters were unreachable.** Category matching used hardcoded
+  component-kind lists that disagreed with the `category` field each component declares, so
+  Media, Typography, and Navigation components appeared only under *All* and had no tab of their
+  own. Matching now derives from the declared category, and tabs exist for all of them.
+- **Palette badges disagreed with the filtered list.** Each tab's count is now computed with the
+  same predicate that filters the list, so the badge always matches the number of rows shown.
+- **Palette entries sharing a `kind` produced the wrong component.** Heading and Link both
+  declared `kind: "Text"` and had no template, so `palette_drag_payload` emitted the bare kind and
+  `create_canvas_component("Text")` built a default paragraph: the advertised Heading became a
+  paragraph and Link became plain text. Link is now a real `CanvasComponent::Link` (with an `href`
+  the renderer and every exporter emit as an anchor), Heading carries a template that sets
+  `TextTag::H1`, and both resolve through their stable library-entry id.
+- **The skip link pointed at `##main-canvas`.** `SkipLink` interpolated `target` into `#{}` while
+  the editor passed an already-hashed `"#main-canvas"`, so the link never resolved; its target also
+  lacked `tabindex="-1"`, so the click handler's `.focus()` was a no-op. The component now strips a
+  leading `#` and the canvas region is programmatically focusable.
+- **"Save to Library" silently did nothing.** Saving a canvas component as a custom component
+  showed a success notification but only appended to `custom_components`, never to
+  `component_library`, so it never appeared in the palette. It now registers through
+  `ComponentRegistry::add_custom` and shows up under *Custom* immediately.
+- **Saved components lost their design when reused.** A saved entry kept the full component as
+  JSON in its `template`, but dragging it back into the canvas rebuilt a default component from
+  its `kind`, discarding every property, style, and child. The drag payload now identifies the
+  saved entry by its new stable `id` (`Saved::<id>`) and the canvas deserializes its template with
+  fresh ids, for every component type. Names are no longer used as identity, so two saved entries
+  with the same display name — or a saved name that collides with a built-in — each resolve to
+  their own design, and delete/rename target the right entry.
+- **Saved-component names were unvalidated.** `add_custom` and `update_custom_by_index` now trim
+  the name and reject blank or duplicate (case-insensitive) names with a notification instead of
+  storing an entry the palette could not tell apart.
+- **Keyboard shortcuts mutated the canvas behind an open modal.** The global keydown listener only
+  ignored events from text inputs, so Delete, `Ctrl+Z`, and `Ctrl+A` still edited the hidden canvas
+  while Export, Settings, Shortcuts, Template Gallery, Command Palette, or the save-template dialog
+  was open. `KeyboardHandler` now takes a `modal_open` signal derived from the *same* signals that
+  render each modal and stays dormant while any dialog is visible. The Export modal previously had
+  two signals — a local `show_export` and `app_state.ui.show_export_modal` — and the gate watched
+  the wrong one; they are consolidated onto `app_state.ui.show_export_modal`.
+- **Palette rows claimed keyboard support they did not have.** The rows are focusable and exposed
+  as `option`s but only had drag handlers. `Enter`/`Space` now adds the component to the canvas
+  root (undoable, and selected), matching the documented behaviour.
+- **The browser test suite rewrote `backend/projects.json`.** `AppState::new` runs
+  `initialize_project_state` and `setup_auto_save`, so mounting the real app in `wasm-pack test`
+  seeded the canvas from the newest project and auto-saved over it whenever a backend was
+  reachable, mutating tracked runtime data as a side effect of running tests. Both are now skipped
+  under `cfg(test)`, and the canvas assertions compare against a pre-interaction snapshot rather
+  than an absolute component count.
+- Removed the duplicate "Image" entry from the default library.
+- `backend/projects.json` restored to its base state: the two screenshot-session demo projects
+  (`Admin Dashboard Shell`, `Marketing Landing Page`) are no longer in tracked runtime data.
+
+### Documentation
+
+- Corrected the click-to-place claim (`frontend/QUICKSTART.md`) to the actual keyboard activation,
+  and stated explicitly that **Save to Library** entries are session-only — a saved project carries
+  the canvas layout but not the library — across `README.md`, `frontend/README.md`,
+  `frontend/QUICKSTART.md`, and `AGENTS.md`. Removed the stale static unit-test count from the
+  root README.
+
 ### Changed
 
 - Canvas stylesheet is now complete for all rendered components (`canvas-*` classes).
@@ -35,7 +95,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
-- Frontend: 102 unit tests green, `wasm_smoke` browser test added, export regression test covering
-  all components across generators.
-- Backend: new validation module with 5 unit tests.
+- Frontend: unit tests green, `wasm_smoke` browser test added, export regression test covering
+  all components across generators. New regression tests cover the saved-component id round trip
+  (same-named entries, a saved name shadowing a built-in, nested container/card id regeneration,
+  rename/delete targeting), name validation, palette keyboard activation, and modal gating of the
+  canvas shortcuts (Export included) driven through the real modal signals.
+- Backend: validation module with its own unit tests.
 - CI runs `cargo fmt`, `cargo clippy --all-targets` and unit tests; WASM artifacts uploaded.

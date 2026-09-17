@@ -3,19 +3,37 @@ use leptos::prelude::*;
 
 #[component]
 pub fn SettingsModal() -> impl IntoView {
+    use crate::builder::hooks::use_escape_key::use_escape_key;
+
     let app_state = AppState::expect_context();
     let show = app_state.ui.show_settings_modal;
     let settings = app_state.settings;
 
-    let close = move |_| show.set(false);
+    use_escape_key(show, move || show.set(false));
 
     view! {
         <Show when=move || show.get()>
-            <div class="modal-backdrop" on:click=close>
-                <div class="modal-content settings-modal" on:click=move |ev| ev.stop_propagation()>
+            <div
+                class="modal-backdrop"
+                role="presentation"
+                on:click=move |_| show.set(false)
+            >
+                <div
+                    class="modal-content settings-modal"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="settings-modal-title"
+                    on:click=move |ev| ev.stop_propagation()
+                >
                     <div class="modal-header">
-                        <h3>"Settings"</h3>
-                        <button class="close-btn" on:click=close>"×"</button>
+                        <h3 id="settings-modal-title">"Settings"</h3>
+                        <button
+                            class="close-btn"
+                            aria-label="Close settings"
+                            on:click=move |_| show.set(false)
+                        >
+                            "×"
+                        </button>
                     </div>
                     <div class="modal-body">
                         <div class="setting-item">

@@ -64,6 +64,7 @@ pub fn Sidebar() -> impl IntoView {
         }
 
         let new_component = LibraryComponent {
+            id: crate::builder::component_library::new_library_id(),
             name: name.clone(),
             kind: "Custom".to_string(),
             template: Some(template.clone()),
@@ -74,7 +75,10 @@ pub fn Sidebar() -> impl IntoView {
 
         let mut custom = app_state.ui.custom_components.get();
         let mut library = app_state.ui.component_library.get();
-        ComponentRegistry::add_custom(&mut custom, &mut library, new_component);
+        if let Err(err) = ComponentRegistry::add_custom(&mut custom, &mut library, new_component) {
+            error_msg.set(err.message());
+            return;
+        }
         app_state.ui.custom_components.set(custom);
         app_state.ui.component_library.set(library);
 
@@ -145,13 +149,16 @@ pub fn Sidebar() -> impl IntoView {
 
         let mut custom = existing_custom;
         let mut library = app_state.ui.component_library.get();
-        ComponentRegistry::update_custom_by_index(
+        if let Err(e) = ComponentRegistry::update_custom_by_index(
             &mut custom,
             &mut library,
             idx,
             name.clone(),
             template.clone(),
-        );
+        ) {
+            error_msg.set(e.message());
+            return;
+        }
         app_state.ui.custom_components.set(custom);
         app_state.ui.component_library.set(library);
 

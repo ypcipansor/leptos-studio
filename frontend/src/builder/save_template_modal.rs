@@ -4,7 +4,11 @@ use leptos::prelude::*;
 
 #[component]
 pub fn SaveTemplateModal(show: RwSignal<bool>, on_close: Callback<()>) -> impl IntoView {
+    use crate::builder::hooks::use_escape_key::use_escape_key;
+
     let app_state = AppState::expect_context();
+
+    use_escape_key(show, move || on_close.run(()));
 
     let name = RwSignal::new(String::new());
     let description = RwSignal::new(String::new());
@@ -74,17 +78,27 @@ pub fn SaveTemplateModal(show: RwSignal<bool>, on_close: Callback<()>) -> impl I
         <Show when=move || show.get()>
             <div
                 class="modal-backdrop"
+                role="presentation"
                 on:click=move |_| on_close.run(())
             >
                 <div
                     class="modal-content"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="save-template-modal-title"
                     style="max-width: 500px"
                     on:click=move |ev: web_sys::MouseEvent| ev.stop_propagation()
                     on:keydown=on_keydown
                 >
                     <div class="modal-header">
-                        <h3>"Save as Template"</h3>
-                        <button class="close-btn" on:click=move |_| on_close.run(())>"×"</button>
+                        <h3 id="save-template-modal-title">"Save as Template"</h3>
+                        <button
+                            class="close-btn"
+                            aria-label="Close save template dialog"
+                            on:click=move |_| on_close.run(())
+                        >
+                            "×"
+                        </button>
                     </div>
 
                     <div class="modal-body">

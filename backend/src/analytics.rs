@@ -1,6 +1,6 @@
 use axum::{Json, extract::State, http::StatusCode};
 use serde::{Deserialize, Serialize};
-use std::{path::Path as FilePath, sync::Arc};
+use std::sync::Arc;
 use tokio::sync::RwLock;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -14,21 +14,21 @@ pub struct AnalyticsData {
 // We append to a list, simpler store than map for logs
 pub type AnalyticsStore = Arc<RwLock<Vec<AnalyticsData>>>;
 
-fn get_data_file() -> String {
-    std::env::var("ANALYTICS_DATA_FILE").unwrap_or_else(|_| "analytics.json".to_string())
+fn get_data_file() -> std::path::PathBuf {
+    crate::paths::data_file("ANALYTICS_DATA_FILE", "analytics.json")
 }
 
 pub fn load_analytics() -> Vec<AnalyticsData> {
     let path = get_data_file();
-    if FilePath::new(&path).exists() {
+    if path.exists() {
         if let Ok(file) = std::fs::File::open(&path) {
             let reader = std::io::BufReader::new(file);
             if let Ok(list) = serde_json::from_reader(reader) {
-                tracing::info!("Loaded analytics from {}", path);
+                tracing::info!("Loaded analytics from {}", path.display());
                 return list;
             }
         }
-        tracing::error!("Failed to load analytics from {}", path);
+        tracing::error!("Failed to load analytics from {}", path.display());
     }
     Vec::new()
 }

@@ -17,7 +17,7 @@ crate-type = ["cdylib", "rlib"]
 leptos = { version = "0.8.19", features = ["csr"] }
 leptos_router = "0.8.13"
 leptos_dom = "0.8.8"
-web-sys = { version = "0.3.98", features = ["DragEvent", "DataTransfer", "Window", "Storage", "console", "HtmlInputElement", "FileList", "File", "Clipboard", "Navigator", "Element", "HtmlElement", "Event", "EventTarget", "Blob", "BlobPropertyBag", "Url", "FileReader", "DomException", "NodeList", "Node", "Performance"] }
+web-sys = { version = "0.3.98", features = ["DragEvent", "DataTransfer", "Window", "Storage", "console", "HtmlInputElement", "FileList", "File", "Clipboard", "Navigator", "Element", "HtmlElement", "Event", "EventTarget", "Blob", "BlobPropertyBag", "Url", "FileReader", "DomException", "NodeList", "Node", "Performance", "Document", "KeyboardEvent", "KeyboardEventInit", "MouseEvent", "MouseEventInit", "FocusEvent"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 console_error_panic_hook = "0.1"
