@@ -35,6 +35,15 @@ pub struct LibraryComponent {
     pub description: Option<String>,
 }
 
+/// Drag payload prefix for a saved library entry.
+///
+/// Two entries can share a component `kind` while holding different designs, so
+/// a saved entry is identified by its name rather than by its kind.
+pub const SAVED_COMPONENT_PREFIX: &str = "Saved::";
+
+/// Drag payload prefix for the built-in `Custom` placeholder component.
+pub const CUSTOM_COMPONENT_PREFIX: &str = "Custom::";
+
 /// Simple registry helper for working with LibraryComponent collections.
 pub struct ComponentRegistry;
 
@@ -594,6 +603,48 @@ pub fn builtin_library_components() -> Vec<LibraryComponent> {
     ]
 }
 
+/// Build the drag payload a palette entry carries.
+///
+/// Entries with a stored `template` keep their design, so the payload has to
+/// identify the entry itself instead of its component kind.
+pub fn palette_drag_payload(component: &LibraryComponent) -> String {
+    if component.template.is_some() {
+        return format!("{}{}", SAVED_COMPONENT_PREFIX, component.name);
+    }
+    if component.kind == "Custom" {
+        return format!("{}{}", CUSTOM_COMPONENT_PREFIX, component.name);
+    }
+    component.kind.clone()
+}
+
+/// Resolve a palette drag payload into a fresh canvas component.
+///
+/// Payloads naming a saved library entry are rebuilt by deserializing the entry's
+/// `template`, so the saved properties, style and children come back. `library` is
+/// the palette's current contents, which is where the template lives. The result
+/// always gets fresh ids (recursively for containers and cards) so the same entry
+/// can be dropped repeatedly. Payloads naming a component kind fall back to a new
+/// default component.
+pub fn create_canvas_component_from_payload(
+    payload: &str,
+    library: &[LibraryComponent],
+) -> Option<CanvasComponent> {
+    if let Some(name) = payload.strip_prefix(SAVED_COMPONENT_PREFIX) {
+        let entry = library.iter().find(|entry| entry.name == name)?;
+        let restored = entry
+            .template
+            .as_deref()
+            .and_then(|template| serde_json::from_str::<CanvasComponent>(template).ok());
+        return match restored {
+            Some(component) => Some(component.duplicate_with_new_id()),
+            // An unreadable template must not lose the component entirely; fall
+            // back to the default shape its kind produces.
+            None => create_canvas_component(&entry.kind),
+        };
+    }
+    create_canvas_component(payload)
+}
+
 pub fn create_canvas_component(component_type: &str) -> Option<CanvasComponent> {
     match component_type {
         "Button" => {
@@ -671,12 +722,166 @@ pub fn create_canvas_component(component_type: &str) -> Option<CanvasComponent> 
             let progress = crate::domain::ProgressComponent::new();
             Some(CanvasComponent::Progress(progress))
         }
-        data if data.starts_with("Custom::") => {
-            let name = data.strip_prefix("Custom::").unwrap_or("Custom");
+        data if data.starts_with(CUSTOM_COMPONENT_PREFIX) => {
+            let name = data
+                .strip_prefix(CUSTOM_COMPONENT_PREFIX)
+                .unwrap_or("Custom");
             let custom =
                 CustomComponent::new(name.to_string(), "<div>Custom Component</div>".to_string());
             Some(CanvasComponent::Custom(custom))
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::{
+        ButtonComponent, ButtonSize, ButtonVariant, ComponentStyle, ComponentType,
+    };
+
+    fn saved_button_entry(label: &str, background_color: &str) -> LibraryComponent {
+        let mut button = ButtonComponent::new(label.to_string());
+        button.variant = ButtonVariant::Outline;
+        button.size = ButtonSize::Large;
+        button.style = ComponentStyle {
+            background_color: Some(background_color.to_string()),
+            ..ComponentStyle::default()
+        };
+
+        LibraryComponent {
+            name: format!("{label} preset"),
+            kind: ComponentType::Button.to_string(),
+            category: "Custom".to_string(),
+            description: Some("User saved component".to_string()),
+            template: Some(
+                serde_json::to_string_pretty(&CanvasComponent::Button(button))
+                    .expect("button should serialize"),
+            ),
+            props_schema: None,
+        }
+    }
+
+    #[test]
+    fn test_saved_component_keeps_its_design_when_recreated() {
+        let entry = saved_button_entry("Checkout", "#2563eb");
+        let payload = palette_drag_payload(&entry);
+
+        let recreated =
+            create_canvas_component_from_payload(&payload, std::slice::from_ref(&entry))
+                .expect("saved entry should be recreated");
+
+        let CanvasComponent::Button(button) = &recreated else {
+            panic!("expected a Button, got {:?}", recreated.component_type());
+        };
+
+        assert_eq!(button.label, "Checkout");
+        assert_eq!(button.variant, ButtonVariant::Outline);
+        assert_eq!(button.size, ButtonSize::Large);
+        assert_eq!(button.style.background_color.as_deref(), Some("#2563eb"));
+
+        // The saved design must come back under a fresh id so the same entry can
+        // be dropped repeatedly without the canvas keyed components colliding.
+        let original: CanvasComponent = serde_json::from_str(entry.template.as_deref().unwrap())
+            .expect("template should deserialize");
+        assert_ne!(recreated.id(), original.id());
+    }
+
+    #[test]
+    fn test_container_saved_to_library_regenerates_child_ids() {
+        let mut container = ContainerComponent::new();
+        container
+            .children
+            .push(CanvasComponent::Button(ButtonComponent::new(
+                "Inner".to_string(),
+            )));
+
+        let entry = LibraryComponent {
+            template: Some(serde_json::to_string(&CanvasComponent::Container(container)).unwrap()),
+            ..saved_button_entry("Card shell", "#ffffff")
+        };
+
+        let recreated = create_canvas_component_from_payload(
+            &palette_drag_payload(&entry),
+            std::slice::from_ref(&entry),
+        )
+        .expect("saved container should be recreated");
+
+        let CanvasComponent::Container(container) = &recreated else {
+            panic!("expected a Container");
+        };
+        assert_eq!(container.children.len(), 1);
+        assert_ne!(container.children[0].id(), recreated.id());
+    }
+
+    #[test]
+    fn test_builtin_entries_still_drag_by_kind() {
+        let library = builtin_library_components();
+        let button = library
+            .iter()
+            .find(|c| c.kind == "Button")
+            .expect("built-in Button missing");
+
+        assert_eq!(palette_drag_payload(button), "Button");
+
+        let recreated = create_canvas_component_from_payload("Button", &library)
+            .expect("built-in kind should still create a component");
+        assert!(matches!(recreated, CanvasComponent::Button(_)));
+        assert!(create_canvas_component_from_payload("Saved::Missing", &library).is_none());
+    }
+
+    /// Mirrors the real "Save to Library" flow: the canvas component is stored on
+    /// the entry's `template` and registered via `add_custom`, then the palette
+    /// payload for that entry must resolve back to the saved design.
+    #[test]
+    fn test_saved_entry_round_trips_through_add_custom() {
+        let mut button = ButtonComponent::new("Purchase".to_string());
+        button.variant = ButtonVariant::Ghost;
+        button.style = ComponentStyle {
+            color: Some("#111827".to_string()),
+            ..ComponentStyle::default()
+        };
+        let on_canvas = CanvasComponent::Button(button);
+
+        let entry = LibraryComponent {
+            name: "Purchase action".to_string(),
+            kind: on_canvas.component_type().to_string(),
+            category: "Custom".to_string(),
+            description: Some("User saved component".to_string()),
+            template: Some(serde_json::to_string_pretty(&on_canvas).unwrap()),
+            props_schema: None,
+        };
+
+        let mut custom = Vec::new();
+        let mut library = builtin_library_components();
+        ComponentRegistry::add_custom(&mut custom, &mut library, entry);
+
+        assert_eq!(
+            ComponentRegistry::custom_from_library(&library).len(),
+            1,
+            "saved entry must be visible in the palette"
+        );
+
+        let saved = library
+            .iter()
+            .find(|c| c.name == "Purchase action")
+            .expect("saved entry missing from library");
+        let recreated =
+            create_canvas_component_from_payload(&palette_drag_payload(saved), &library)
+                .expect("saved entry should be recreated");
+
+        let CanvasComponent::Button(button) = &recreated else {
+            panic!("expected a Button");
+        };
+        assert_eq!(button.label, "Purchase");
+        assert_eq!(button.variant, ButtonVariant::Ghost);
+        assert_eq!(button.style.color.as_deref(), Some("#111827"));
+        assert_ne!(recreated.id(), on_canvas.id());
+
+        // Dropping the same entry twice must not reuse an id.
+        let second =
+            create_canvas_component_from_payload(&palette_drag_payload(saved), &library).unwrap();
+        assert_ne!(second.id(), recreated.id());
     }
 }

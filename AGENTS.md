@@ -41,6 +41,17 @@ cd frontend && trunk build              # produces dist/
 - Saving a canvas component as a custom component must go through
   `ComponentRegistry::add_custom`, which writes to both `custom_components` and
   `component_library`. Writing only to `custom_components` leaves it invisible in the palette.
+- A saved library entry carries the whole component as JSON on its `template` field, while its
+  `kind` only names the default shape. Dragging must therefore identify the entry, not the kind:
+  `palette_drag_payload` emits `Saved::<name>` for entries with a template, and
+  `create_canvas_component_from_payload` deserializes the template and regenerates ids. Payloads
+  that name a kind (including the built-in `Custom` placeholder) still build a default component.
+  Dropping a saved entry by its kind would silently return a blank default.
+- Modal visibility gates the global shortcuts via `KeyboardHandler`'s `modal_open` prop, derived in
+  `pages/editor.rs` from `show_command_palette` / `show_export_modal` / `show_settings_modal` /
+  `show_shortcuts_modal` / `show_template_gallery` / `show_save_template`. Without it, Delete,
+  `Ctrl+Z` and friends would edit the canvas hidden behind an open dialog. Any new modal must be
+  added to that derivation and to the matching `should_dispatch_shortcut` test.
 - Use `history_rw.get_untracked()` inside async handlers to avoid reactive-cycle panics.
 - `cargo test --workspace` also runs integration tests that hit the network/backend; prefer
   `--lib --bins` for a fast local loop.

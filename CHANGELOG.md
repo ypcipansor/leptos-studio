@@ -39,6 +39,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   showed a success notification but only appended to `custom_components`, never to
   `component_library`, so it never appeared in the palette. It now registers through
   `ComponentRegistry::add_custom` and shows up under *Custom* immediately.
+- **Saved components lost their design when reused.** A saved entry kept the full component as
+  JSON in its `template`, but dragging it back into the canvas rebuilt a default component from
+  its `kind`, discarding every property, style, and child. The drag payload now identifies the
+  saved entry (`Saved::<name>`) and the canvas deserializes its template with fresh ids, for every
+  component type.
+- **Keyboard shortcuts mutated the canvas behind an open modal.** The global keydown listener only
+  ignored events from text inputs, so Delete, `Ctrl+Z`, and `Ctrl+A` still edited the hidden canvas
+  while Export, Settings, Shortcuts, Template Gallery, Command Palette, or the save-template dialog
+  was open. `KeyboardHandler` now takes a `modal_open` signal and stays dormant while any dialog is
+  visible.
 - Removed the duplicate "Image" entry from the default library.
 
 ### Changed

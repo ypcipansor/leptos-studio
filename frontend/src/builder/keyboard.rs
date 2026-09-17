@@ -333,6 +333,15 @@ pub fn get_default_shortcuts() -> Vec<KeyboardShortcut> {
     ]
 }
 
+/// Decide whether a keydown event may trigger a canvas shortcut.
+///
+/// Shortcuts are suppressed for events aimed at text inputs (so typing never
+/// edits the canvas) and whenever a modal or dialog is open, since acting on the
+/// hidden canvas behind it is never what the user intended.
+pub fn should_dispatch_shortcut(modal_open: bool, from_text_input: bool) -> bool {
+    !modal_open && !from_text_input
+}
+
 /// Global Keyboard Handler Component
 ///
 /// Listens for keyboard events on `window` and dispatches actions when
@@ -344,17 +353,22 @@ pub fn get_default_shortcuts() -> Vec<KeyboardShortcut> {
 /// # Features
 /// * Global keyboard event listening
 /// * Smart input field detection
+/// * Suppressed while a modal is open, so shortcuts cannot mutate the canvas
+///   hidden behind it
 /// * Prevents default browser behavior for handled shortcuts
 /// * Event propagation control
 ///
 /// # Props
 /// * `shortcuts` - List of keyboard shortcuts to handle
 /// * `on_action` - Callback invoked when a shortcut is triggered
+/// * `modal_open` - Read signal that is true while a modal/dialog is open.
+///   Defaults to `false` when omitted.
 ///
 /// # Example
 /// ```rust,ignore
 /// <KeyboardHandler
 ///     shortcuts=get_default_shortcuts()
+///     modal_open=modal_open
 ///     on_action=move |action| {
 ///         match action {
 ///             KeyboardAction::Undo => // handle undo
@@ -365,7 +379,11 @@ pub fn get_default_shortcuts() -> Vec<KeyboardShortcut> {
 /// />
 /// ```
 #[component]
-pub fn KeyboardHandler<F>(shortcuts: Vec<KeyboardShortcut>, on_action: F) -> impl IntoView
+pub fn KeyboardHandler<F>(
+    shortcuts: Vec<KeyboardShortcut>,
+    #[prop(optional, into)] modal_open: Signal<bool>,
+    on_action: F,
+) -> impl IntoView
 where
     F: Fn(KeyboardAction) + 'static + Clone,
 {
@@ -373,16 +391,17 @@ where
         let shortcuts = shortcuts.clone();
         move |ev: KeyboardEvent| {
             // Don't handle shortcuts when typing in inputs
-            if let Some(target) = ev.target()
-                && let Ok(element) = target.dyn_into::<web_sys::HtmlElement>()
-            {
-                let tag_name = element.tag_name().to_lowercase();
-                if tag_name == "input" || tag_name == "textarea" || tag_name == "select" {
-                    return;
-                }
-                if element.is_content_editable() {
-                    return;
-                }
+            let from_text_input = ev
+                .target()
+                .and_then(|target| target.dyn_into::<web_sys::HtmlElement>().ok())
+                .is_some_and(|element| {
+                    let tag_name = element.tag_name().to_lowercase();
+                    matches!(tag_name.as_str(), "input" | "textarea" | "select")
+                        || element.is_content_editable()
+                });
+
+            if !should_dispatch_shortcut(modal_open.get_untracked(), from_text_input) {
+                return;
             }
 
             for shortcut in &shortcuts {
@@ -403,4 +422,41 @@ where
     });
 
     view! { <div class="keyboard-handler" aria-hidden="true"></div> }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_shortcuts_fire_when_no_modal_is_open() {
+        assert!(should_dispatch_shortcut(false, false));
+    }
+
+    #[test]
+    fn test_shortcuts_are_suppressed_while_a_modal_is_open() {
+        assert!(!should_dispatch_shortcut(true, false));
+    }
+
+    #[test]
+    fn test_shortcuts_are_suppressed_for_text_inputs() {
+        assert!(!should_dispatch_shortcut(false, true));
+        assert!(!should_dispatch_shortcut(true, true));
+    }
+
+    #[test]
+    fn test_default_shortcuts_cover_the_canvas_editing_actions() {
+        let shortcuts = get_default_shortcuts();
+        for action in [
+            KeyboardAction::Delete,
+            KeyboardAction::Undo,
+            KeyboardAction::Redo,
+            KeyboardAction::SelectAll,
+        ] {
+            assert!(
+                shortcuts.iter().any(|s| s.action == action),
+                "{action:?} must keep a shortcut so it can be suppressed by the modal gate"
+            );
+        }
+    }
 }

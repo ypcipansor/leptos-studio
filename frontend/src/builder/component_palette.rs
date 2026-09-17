@@ -6,7 +6,7 @@
 
 use leptos::prelude::*;
 
-use crate::builder::component_library::LibraryComponent;
+use crate::builder::component_library::{LibraryComponent, palette_drag_payload};
 use crate::builder::drag_drop::{DragDropConfig, create_drag_handlers};
 use crate::state::AppState;
 
@@ -267,11 +267,7 @@ pub fn ComponentPalette() -> impl IntoView {
                                     each=move || filtered_components.get()
                                     key=|comp| format!("{}:{}", comp.kind, comp.name)
                                     children=move |comp| {
-                                        let comp_kind = if comp.kind == "Custom" {
-                                            format!("Custom::{}", comp.name)
-                                        } else {
-                                            comp.kind.clone()
-                                        };
+                                        let comp_kind = palette_drag_payload(&comp);
                                         let comp_name = comp.name.clone();
                                         let comp_desc = comp.description.clone().unwrap_or_default();
                                         let comp_category = comp.category.clone();

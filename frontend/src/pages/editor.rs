@@ -117,6 +117,17 @@ pub fn EditorPage() -> impl IntoView {
 
     let active_left_tab = RwSignal::new(LeftPanelTab::Add);
 
+    // Any modal/dialog that overlays the editor. While one is open the canvas is
+    // not the user's target, so the global shortcuts must stay dormant.
+    let modal_open = Signal::derive(move || {
+        app_state.ui.show_command_palette.get()
+            || app_state.ui.show_export_modal.get()
+            || app_state.ui.show_settings_modal.get()
+            || app_state.ui.show_shortcuts_modal.get()
+            || show_template_gallery.get()
+            || show_save_template.get()
+    });
+
     view! {
         <DesignTokenProvider tokens=app_state.ui.design_tokens>
             <AccessibilityProvider>
@@ -124,6 +135,7 @@ pub fn EditorPage() -> impl IntoView {
                 <div class="leptos-studio editor-layout" tabindex="0" role="application" aria-label="Leptos Studio Visual Builder">
                     <KeyboardHandler
                         shortcuts=get_default_shortcuts()
+                        modal_open=modal_open
                         on_action=keyboard_action_handler.clone()
                     />
 

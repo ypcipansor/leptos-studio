@@ -31,7 +31,7 @@ This project follows a Code of Conduct that all contributors are expected to adh
 
 - Rust (stable) - Install via [rustup](https://rustup.rs/)
 - `wasm32-unknown-unknown` target: `rustup target add wasm32-unknown-unknown`
-- [Trunk](https://trunkrs.dev/): `cargo install trunk`
+- [Trunk](https://trunkrs.dev/): `cargo install --locked trunk`
 
 ### Running Locally
 
@@ -39,11 +39,8 @@ This project follows a Code of Conduct that all contributors are expected to adh
 # Start the development server
 trunk serve
 
-# Run tests
-cargo test
-
-# Run WASM tests
-cargo test --target wasm32-unknown-unknown
+# Run tests (this is what CI runs)
+cargo test --workspace --lib --bins
 
 # Check code quality
 cargo clippy --all-targets --all-features
@@ -174,14 +171,20 @@ Fixes #456
 ### Unit Tests
 
 ```bash
-cargo test
+cargo test --workspace --lib --bins
 ```
 
 ### WASM Tests
 
+The browser-only suite (`tests/wasm_smoke.rs`) is compiled with
+`wasm-bindgen-test`. Run it with:
+
 ```bash
-cargo test --target wasm32-unknown-unknown
+wasm-pack test --headless --chrome
 ```
+
+`cargo test --target wasm32-unknown-unknown` is **not** supported: the test
+harness and some dependencies (such as `mio`) do not build for that target.
 
 ### Manual Testing
 

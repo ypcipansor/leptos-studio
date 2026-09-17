@@ -1,4 +1,4 @@
-use crate::builder::component_library::create_canvas_component;
+use crate::builder::component_library::create_canvas_component_from_payload;
 use crate::domain::{CanvasComponent, ComponentId};
 use crate::state::AppState;
 use leptos::prelude::*;
@@ -172,7 +172,10 @@ fn TreeNode(
                             if let Ok(component_type_str) = dt.get_data("component")
                                 && !component_type_str.is_empty()
                             {
-                                if let Some(new_component) = create_canvas_component(&component_type_str) {
+                                if let Some(new_component) = create_canvas_component_from_payload(
+                                    &component_type_str,
+                                    &app_state.ui.component_library.get_untracked(),
+                                ) {
                                     // Try to add as child first (if container)
                                     let added_as_child = app_state.canvas.add_child_component(&id, new_component.clone());
 
