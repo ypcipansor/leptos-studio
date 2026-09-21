@@ -166,6 +166,37 @@ async fn write_store_atomically(
     let dir = data_file
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."));
+
+    // Ensure writes stay inside the process working directory tree.
+    let safe_base = std::env::current_dir()?.canonicalize()?;
+    let candidate_dir = if dir.is_absolute() {
+        dir.to_path_buf()
+    } else {
+        safe_base.join(dir)
+    };
+    let normalized_dir = if candidate_dir.exists() {
+        candidate_dir.canonicalize()?
+    } else if let Some(parent) = candidate_dir.parent() {
+        let normalized_parent = if parent.exists() {
+            parent.canonicalize()?
+        } else {
+            safe_base.clone()
+        };
+        let leaf = candidate_dir
+            .file_name()
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid data directory"))?;
+        normalized_parent.join(leaf)
+    } else {
+        safe_base.clone()
+    };
+
+    if !normalized_dir.starts_with(&safe_base) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "data file path escapes allowed base directory",
+        ));
+    }
+
     if !dir.as_os_str().is_empty() {
         tokio::fs::create_dir_all(dir).await?;
     }
