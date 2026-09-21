@@ -345,6 +345,17 @@ The `tests/wasm_smoke.rs` suite is compiled for the browser with
 that `cargo test --target wasm32-unknown-unknown` does **not** work — the test
 harness and some dependencies do not build for that target.
 
+`wasm-pack` downloads its own `chromedriver`, which can be a major version ahead
+of the system Chromium; the session then fails with *"This version of ChromeDriver
+only supports Chrome version N"*. Install the matching driver and point
+`CHROMEDRIVER` at it, then run the runner `wasm-pack` would have used:
+
+```bash
+CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="$(ls -d ~/.cache/.wasm-pack/wasm-bindgen-*/wasm-bindgen-test-runner)" \
+CHROMEDRIVER=/path/to/matching/chromedriver WASM_BINDGEN_TEST_ONLY_WEB=1 \
+  cargo test --target wasm32-unknown-unknown --lib
+```
+
 ### Writing Tests
 
 **Unit test in domain module:**

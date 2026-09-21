@@ -67,6 +67,17 @@ pub fn static_dir() -> PathBuf {
     static_dir_from(std::env::var_os("STATIC_DIR"), &repo_root())
 }
 
+/// True if any component of `path` is the parent-directory component `..`.
+///
+/// This is deliberately component-wise rather than a substring test: a legal
+/// name may contain `..` inside an ordinary component (`archive..old/`,
+/// `projects..backup.json`), and refusing those would reject valid
+/// configuration. Only a component that *is* `..` can walk upwards.
+pub fn has_parent_dir_component(path: &Path) -> bool {
+    path.components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+}
+
 /// Resolve the single file a store persists to, confined to the directory that
 /// names it.
 ///
@@ -75,8 +86,9 @@ pub fn static_dir() -> PathBuf {
 /// data, but it still decides which file the process overwrites, so it is
 /// resolved rather than trusted:
 ///
-/// * a `..` component is refused in both the directory and the file name, so the
-///   configured path cannot walk upwards;
+/// * a `..` *component* is refused in both the directory and the file name, so
+///   the configured path cannot walk upwards — while a name that merely
+///   contains `..` inside a component stays valid;
 /// * the directory is created if needed and then canonicalised, so symlinks and
 ///   `.` segments in it are resolved *before* anything is written, and the
 ///   resolved directory is the one the file is taken to live in;
@@ -92,17 +104,18 @@ pub fn resolve_data_file(nominated: &Path) -> io::Result<PathBuf> {
     // The checks below run on the text form, before any part of the configured
     // path is handed to the filesystem, so nothing is created or written for a
     // path that is about to be refused.
-    let dir_text = nominated
+    let dir_path = nominated
         .parent()
         .filter(|dir| !dir.as_os_str().is_empty())
-        .map(|dir| dir.to_string_lossy().into_owned())
-        .unwrap_or_else(|| ".".to_string());
-    if dir_text.contains("..") {
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    if has_parent_dir_component(&dir_path) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "data file directory must not contain `..`",
+            "data file directory must not contain a `..` component",
         ));
     }
+    let dir_text = dir_path.to_string_lossy().into_owned();
 
     let file_name = nominated.file_name().ok_or_else(|| {
         io::Error::new(
@@ -111,14 +124,15 @@ pub fn resolve_data_file(nominated: &Path) -> io::Result<PathBuf> {
         )
     })?;
     // `Path::file_name` never yields a path separator, so this cannot contain a
-    // component boundary; the check rules out a literal `..` name.
-    let name_text = file_name.to_string_lossy();
-    if name_text.contains("..") {
+    // component boundary; the check rules out a name that *is* `..`.
+    let name_path = Path::new(file_name);
+    if has_parent_dir_component(name_path) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "data file name must not contain `..`",
+            "data file name must not be `..`",
         ));
     }
+    let name_text = file_name.to_string_lossy();
 
     // Rebuilt from the checked text, so the path used from here on is the one
     // that was validated rather than the nomination it came from.
@@ -299,6 +313,68 @@ mod tests {
         std::fs::create_dir_all(&inner).unwrap();
 
         assert!(resolve_data_file(&inner.join("..").join("projects.json")).is_err());
+        assert!(resolve_data_file(&PathBuf::from("../projects.json")).is_err());
+        assert!(resolve_data_file(&PathBuf::from("nested/../../projects.json")).is_err());
+    }
+
+    /// A `..` *component* is the parent directory; a component that merely
+    /// contains `..` as a substring is an ordinary name and must stay valid.
+    /// Refusing every substring was over-strict: it rejected legal
+    /// configuration such as a directory called `archive..old`.
+    #[test]
+    fn resolve_data_file_accepts_dot_dot_inside_an_ordinary_component() {
+        assert!(!has_parent_dir_component(Path::new(
+            "archive..old/projects.json"
+        )));
+        assert!(!has_parent_dir_component(Path::new(
+            "projects..backup.json"
+        )));
+        assert!(has_parent_dir_component(Path::new(
+            "nested/../projects.json"
+        )));
+        assert!(has_parent_dir_component(Path::new("..")));
+
+        let scratch = TempDir::new();
+
+        let nested = scratch.0.join("archive..old").join("projects.json");
+        let resolved =
+            resolve_data_file(&nested).expect("`archive..old/` is a legal directory name");
+        assert_eq!(resolved.file_name().unwrap(), "projects.json");
+        assert_eq!(
+            resolved.parent().unwrap(),
+            scratch.0.join("archive..old").canonicalize().unwrap(),
+            "the legal directory must be created and canonicalised"
+        );
+
+        let sibling = scratch.0.join("projects..backup.json");
+        let resolved =
+            resolve_data_file(&sibling).expect("`projects..backup.json` is a legal file");
+        assert_eq!(
+            resolved.file_name().unwrap(),
+            "projects..backup.json",
+            "a `..` inside the file name must not be treated as a parent component"
+        );
+    }
+
+    /// Confinement must survive a symlinked directory: the result is canonical,
+    /// so the write lands in the resolved directory and nowhere else.
+    #[cfg(unix)]
+    #[test]
+    fn resolve_data_file_resolves_a_symlinked_directory_to_its_target() {
+        let scratch = TempDir::new();
+        let real = scratch.0.join("real");
+        let link = scratch.0.join("link");
+        std::fs::create_dir_all(&real).unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        let resolved = resolve_data_file(&link.join("projects.json")).expect("must resolve");
+        assert_eq!(resolved.parent().unwrap(), real.canonicalize().unwrap());
+        assert_ne!(
+            resolved.parent().unwrap(),
+            link,
+            "the resolved path must be the target, not the symlink"
+        );
+        assert!(resolved.starts_with(real.canonicalize().unwrap()));
     }
 
     /// A trailing directory reference is not a file name: accepting it would let

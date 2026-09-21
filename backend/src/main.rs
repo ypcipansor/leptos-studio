@@ -5,16 +5,28 @@ use axum::{
     routing::{delete, get},
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
-use tokio::sync::{Mutex, RwLock};
+use std::{collections::HashMap, net::SocketAddr};
+
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 
 mod analytics;
 mod git;
 mod paths;
+mod store;
 mod templates;
 mod validation;
+
+/// The project state: id → serialized project JSON.
+type Projects = HashMap<String, serde_json::Value>;
+
+/// The project store.
+///
+/// The mutation/persistence transaction (serialised mutation, atomic ordered
+/// write, rollback) lives in [`store::Store`], shared with every other backend
+/// store so the guarantees cannot drift between them. This alias keeps the
+/// project handlers reading naturally.
+type Store = store::Store<Projects>;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct ProjectMetadata {
@@ -22,109 +34,6 @@ struct ProjectMetadata {
     name: String,
     last_modified: f64,
     component_count: usize,
-}
-
-/// The project store: the in-memory map plus the file it is persisted to.
-///
-/// Bundling the path with the data keeps persistence testable — a test can point
-/// a store at an isolated temp file and exercise the real `save_project`
-/// handler without touching the tracked `backend/projects.json`.
-#[derive(Clone)]
-struct Store {
-    projects: Arc<RwLock<HashMap<String, serde_json::Value>>>,
-    data_file: std::path::PathBuf,
-    /// Serialises mutation + persistence, not the state lock.
-    ///
-    /// Every mutating request runs as one transaction under this mutex:
-    ///
-    /// 1. mutate the in-memory map and clone the resulting snapshot;
-    /// 2. release the state lock;
-    /// 3. write the snapshot atomically.
-    ///
-    /// Because the whole sequence is exclusive, only one transaction can be
-    /// between "mutate" and "write" at a time, so writes always land on disk in
-    /// the same order the state changed and a rollback can never clobber a
-    /// concurrent request that committed in between — the failure is rolled back
-    /// before the next transaction is allowed to start.
-    ///
-    /// The mutex deliberately does *not* guard the state: reads (`list_projects`,
-    /// `get_project`) still take a shared read lock and never block on a writer's
-    /// filesystem I/O. Only the write transaction is serialised, which is what
-    /// makes the ordering guarantee hold. Mutation callers must not hold the
-    /// projects read/write lock across the filesystem write (see
-    /// `Store::commit`).
-    mutation_lock: Arc<Mutex<()>>,
-
-    /// Test-only hook that forces a persistence failure for a given resulting
-    /// state, so the rollback path can be exercised deterministically without
-    /// racing a real filesystem error.
-    #[cfg(test)]
-    fail_hook: Arc<std::sync::Mutex<Option<FailHook>>>,
-}
-
-#[cfg(test)]
-type FailHook = Box<dyn Fn(&HashMap<String, serde_json::Value>) -> bool + Send + Sync>;
-
-impl Store {
-    fn new(projects: HashMap<String, serde_json::Value>, data_file: std::path::PathBuf) -> Self {
-        Self {
-            projects: Arc::new(RwLock::new(projects)),
-            data_file,
-            mutation_lock: Arc::new(Mutex::new(())),
-            #[cfg(test)]
-            fail_hook: Arc::new(std::sync::Mutex::new(None)),
-        }
-    }
-
-    /// Run a mutating transaction to completion: mutate state, then persist the
-    /// new snapshot atomically. `mutate` returns the value to report to the
-    /// caller; if persistence fails the mutation is rolled back and the caller
-    /// observes the error.
-    async fn commit<T: Send>(
-        &self,
-        mutate: impl FnOnce(&mut HashMap<String, serde_json::Value>) -> T + Send,
-    ) -> std::io::Result<T> {
-        // Serialises the whole transaction: no other mutation can observe or
-        // write an intermediate state while this one is in flight.
-        let _tx = self.mutation_lock.lock().await;
-
-        let (result, old_state, new_state) = {
-            let mut guard = self.projects.write().await;
-            let old_state = guard.clone();
-            let result = mutate(&mut guard);
-            let new_state = guard.clone();
-            (result, old_state, new_state)
-        };
-
-        #[cfg(test)]
-        let injected_failure = {
-            let hook = self.fail_hook.lock().expect("fail hook mutex poisoned");
-            hook.as_ref().is_some_and(|f| f(&new_state))
-        };
-        #[cfg(not(test))]
-        let injected_failure = false;
-
-        // The state lock is released before touching the filesystem: holding a
-        // write lock across an `await`ed write would block every reader (and
-        // `commit` itself) for the duration of the I/O.
-        let write_result = if injected_failure {
-            Err(std::io::Error::other("injected persistence failure"))
-        } else {
-            write_store_atomically(&self.data_file, &new_state).await
-        };
-
-        match write_result {
-            Ok(()) => Ok(result),
-            Err(e) => {
-                // Only this transaction could have changed the state since the
-                // snapshot was taken, because `mutation_lock` is held for the
-                // whole transaction. Restoring the pre-transaction snapshot is
-                // therefore exact — it cannot discard another request's commit.
-                *self.projects.write().await = old_state;
-                Err(e)
-            }
-        }
-    }
 }
 
 fn get_data_file() -> std::path::PathBuf {
@@ -147,59 +56,6 @@ fn load_store() -> HashMap<String, serde_json::Value> {
     HashMap::new()
 }
 
-/// Persist the store to disk atomically.
-///
-/// Serialises the map, writes it to a temporary file in the *same* directory
-/// (so the rename stays on one filesystem and is therefore atomic), syncs it,
-/// then renames it over `store.data_file`. A crash or a partial write can
-/// therefore only ever leave the old, complete file or the new, complete file —
-/// never a truncated or half-written JSON document.
-///
-/// Callers must go through [`Store::commit`], which serialises the write against
-/// other mutations and rolls the in-memory state back if this returns `Err`.
-async fn write_store_atomically(
-    data_file: &std::path::Path,
-    projects: &HashMap<String, serde_json::Value>,
-) -> std::io::Result<()> {
-    let data = serde_json::to_vec_pretty(projects)?;
-
-    // Confine the write to the directory the store was configured with. Every
-    // path below — the directory, the temporary file and the rename target — is
-    // derived from this resolved value, so none of them can be redirected
-    // elsewhere by a `..` or a symlink in the configured name.
-    let safe_data_file = paths::resolve_data_file(data_file)?;
-    let dir = safe_data_file
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."));
-
-    // Unique per write so concurrent writers (in different processes) cannot
-    // clobber each other's temp file.
-    let file_name = safe_data_file
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "projects.json".to_string());
-    let tmp_path = dir.join(format!(".{}.{}.tmp", file_name, uuid::Uuid::new_v4()));
-
-    let write_result = async {
-        let mut file = tokio::fs::File::create(&tmp_path).await?;
-        tokio::io::AsyncWriteExt::write_all(&mut file, &data).await?;
-        tokio::io::AsyncWriteExt::flush(&mut file).await?;
-        // Durability: the bytes must be on disk before the rename publishes them.
-        file.sync_all().await?;
-        drop(file);
-        tokio::fs::rename(&tmp_path, &safe_data_file).await
-    }
-    .await;
-
-    if write_result.is_err() {
-        // Best-effort cleanup; the temp file is not the data file, so leaving it
-        // behind is harmless but untidy.
-        let _ = tokio::fs::remove_file(&tmp_path).await;
-    }
-
-    write_result
-}
-
 /// The project CRUD routes for a given store. Shared by `main` and the
 /// integration-style tests so both exercise the exact same handlers.
 fn router_for_store(store: Store) -> Router {
@@ -220,14 +76,12 @@ async fn main() {
     let initial_data = load_store();
     let store = Store::new(initial_data, get_data_file());
 
-    let initial_templates = templates::load_templates();
-    let template_store = Arc::new(RwLock::new(initial_templates));
-
-    let initial_git = git::load_git_data();
-    let git_store = Arc::new(RwLock::new(initial_git));
-
-    let initial_analytics = analytics::load_analytics();
-    let analytics_store = Arc::new(RwLock::new(initial_analytics));
+    // Every store shares the same persistence transaction (serialised mutation,
+    // atomic ordered write, rollback, directory sync) so the guarantees cannot
+    // drift between them.
+    let template_store = templates::store();
+    let git_store = git::store();
+    let analytics_store = analytics::store();
 
     // CORS
     // Use CORS_ORIGIN env var if set, otherwise default to Any (for dev)
@@ -299,7 +153,7 @@ async fn main() {
 }
 
 async fn list_projects(State(store): State<Store>) -> Json<Vec<ProjectMetadata>> {
-    let store = store.projects.read().await;
+    let store = store.state.read().await;
     let mut projects: Vec<ProjectMetadata> = store
         .values()
         .map(|p| {
@@ -393,10 +247,11 @@ async fn save_project(
     match store
         .commit(move |projects| {
             projects.insert(insert_id, payload);
+            store::Mutation::Changed(())
         })
         .await
     {
-        Ok(()) => {}
+        Ok(_) => {}
         Err(e) => {
             tracing::error!("Failed to save store: {}", e);
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
@@ -415,7 +270,7 @@ async fn get_project(
     Path(id): Path<String>,
     State(store): State<Store>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let store = store.projects.read().await;
+    let store = store.state.read().await;
     if let Some(project) = store.get(&id) {
         Ok(Json(project.clone()))
     } else {
@@ -426,9 +281,22 @@ async fn get_project(
 async fn delete_project(Path(id): Path<String>, State(store): State<Store>) -> StatusCode {
     // Same transaction path as `save_project`: the removal and its file write are
     // serialised, and a write failure restores the project exactly.
-    match store.commit(|projects| projects.remove(&id)).await {
-        Ok(Some(_removed)) => StatusCode::NO_CONTENT,
-        Ok(None) => StatusCode::NOT_FOUND,
+    //
+    // The mutate step reports whether it actually removed anything. An id that is
+    // not present is a no-op, so `commit` skips persistence entirely — a DELETE
+    // for a missing project must answer 404 even when the storage layer is
+    // broken, instead of surfacing the storage failure as a 500. Deciding that
+    // inside the transaction (with the mutation lock held) rather than with a
+    // check-then-delete also keeps it free of the race that pattern would add.
+    match store
+        .commit(|projects| match projects.remove(&id) {
+            Some(_removed) => store::Mutation::Changed(()),
+            None => store::Mutation::Unchanged(()),
+        })
+        .await
+    {
+        Ok(store::Mutation::Changed(())) => StatusCode::NO_CONTENT,
+        Ok(store::Mutation::Unchanged(())) => StatusCode::NOT_FOUND,
         Err(e) => {
             tracing::error!("Failed to save store after delete: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
@@ -441,6 +309,7 @@ mod tests {
     use axum::body::{Body, to_bytes};
     use axum::http::{Request, StatusCode};
     use serde_json::json;
+    use std::sync::Arc;
     use tower::ServiceExt;
 
     /// A store backed by a unique temp file, so tests never touch the tracked
@@ -722,7 +591,7 @@ mod tests {
 
         // Repeated so a genuine race has many chances to interleave.
         for _ in 0..20 {
-            test.store.projects.write().await.clear();
+            test.store.state.write().await.clear();
             let ((a_id, a_status), (b_id, b_status)) =
                 race(test.store.clone(), ("proj-a", false), ("proj-b", false)).await;
             assert_eq!(
@@ -757,6 +626,7 @@ mod tests {
             test.store
                 .commit(|projects| {
                     projects.insert("proj-x".to_string(), project_payload("proj-x", "X"));
+                    store::Mutation::Changed(())
                 })
                 .await
                 .expect("seed must persist");
@@ -801,6 +671,84 @@ mod tests {
         }
     }
 
+    /// A DELETE for an id that is not there is a no-op: it must answer 404
+    /// without attempting a persistence write, so a failing storage layer cannot
+    /// turn it into a 500. The fail hook proves no write was attempted — a
+    /// write would have failed and produced a 500.
+    #[tokio::test]
+    async fn deleting_a_missing_project_is_404_without_writing() {
+        let test = TestStore::new("delete-missing");
+        test.store.set_fail_hook(Some(Box::new(|_| true)));
+
+        let (status, _) = request(
+            test.store.clone(),
+            "DELETE",
+            "/api/projects/does-not-exist",
+            None,
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "a missing project must be 404 even when storage is failing"
+        );
+        assert!(
+            !test.path.exists(),
+            "a no-op delete must not write the data file at all"
+        );
+    }
+
+    /// The same no-op rule must hold when the file already exists: a delete for an
+    /// unknown id must leave the existing bytes byte-identical rather than
+    /// rewriting them.
+    #[tokio::test]
+    async fn deleting_a_missing_project_leaves_existing_bytes_untouched() {
+        let test = TestStore::new("delete-missing-existing");
+        assert_eq!(
+            post_project(test.store.clone(), project_payload("keep", "Keep")).await,
+            StatusCode::OK
+        );
+        let before = std::fs::read(&test.path).expect("seed must be persisted");
+
+        let (status, _) = request(test.store.clone(), "DELETE", "/api/projects/nope", None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            std::fs::read(&test.path).unwrap(),
+            before,
+            "a no-op delete must not rewrite the file"
+        );
+    }
+
+    /// A DELETE for an id that *is* present must still fail loudly (500) when the
+    /// write fails, and the removal must be rolled back so memory and disk agree.
+    #[tokio::test]
+    async fn deleting_an_existing_project_rolls_back_on_a_failed_write() {
+        let test = TestStore::new("delete-existing-fail");
+        assert_eq!(
+            post_project(test.store.clone(), project_payload("victim", "Victim")).await,
+            StatusCode::OK
+        );
+        let before = std::fs::read(&test.path).unwrap();
+        test.store.set_fail_hook(Some(Box::new(|_| true)));
+
+        let (status, _) = request(test.store.clone(), "DELETE", "/api/projects/victim", None).await;
+        assert_eq!(
+            status,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "a failing write on a real delete must surface as 500"
+        );
+        assert_eq!(
+            listed_ids(test.store.clone()).await,
+            vec!["victim".to_string()],
+            "the failed delete must be rolled back in memory"
+        );
+        assert_eq!(
+            std::fs::read(&test.path).unwrap(),
+            before,
+            "the failed delete must not change the file"
+        );
+    }
+
     /// A failed persistence must roll the mutation back *without* discarding a
     /// transaction that committed concurrently. The failing transaction is
     /// forced deterministically through the fail hook (keyed on the resulting
@@ -813,6 +761,7 @@ mod tests {
         test.store
             .commit(|projects| {
                 projects.insert("seed".to_string(), project_payload("seed", "Seed"));
+                store::Mutation::Changed(())
             })
             .await
             .expect("seed must persist");
@@ -821,9 +770,9 @@ mod tests {
         // exactly the doomed transaction — the keeper transaction's resulting
         // state never contains it, whichever order the two run in, so the keeper
         // always commits and the doomed one always rolls back.
-        let hook: FailHook =
-            Box::new(|state: &HashMap<String, serde_json::Value>| state.contains_key("doomed"));
-        *test.store.fail_hook.lock().unwrap() = Some(hook);
+        test.store.set_fail_hook(Some(Box::new(
+            |state: &HashMap<String, serde_json::Value>| state.contains_key("doomed"),
+        )));
 
         let ((_, doomed_status), (_, keeper_status)) =
             race(test.store.clone(), ("doomed", false), ("keeper", false)).await;
@@ -871,6 +820,7 @@ mod tests {
         test.store
             .commit(|projects| {
                 projects.insert("seed".to_string(), project_payload("seed", "Seed"));
+                store::Mutation::Changed(())
             })
             .await
             .expect("seed must persist");
@@ -888,6 +838,7 @@ mod tests {
                 store
                     .commit(move |projects| {
                         projects.insert(id.clone(), project_payload(&id, &id));
+                        store::Mutation::Changed(())
                     })
                     .await
                     .expect("write must succeed");

@@ -144,6 +144,22 @@ Required sites, in order:
 A component's visual settings (`ComponentStyle` + `Animation`) are part of its semantics, not
 decoration: if the canvas renderer applies them, every visual exporter must too.
 
+**Escape for the target language, not for HTML.** A component's text and URL data can end up in
+two very different contexts and they need opposite treatment:
+
+- in a *markup* template (HTML, Vue, Svelte, Tailwind HTML) or Markdown, the data is HTML text or
+  an attribute value, so it goes through `escape_html` — entities **are** decoded there, and
+  skipping it would inject markup;
+- in the Leptos generator the data becomes a Rust string literal inside a `view!` macro, whose
+  value Leptos sets on the DOM verbatim. HTML-escaping it there bakes the entity into the runtime
+  value: `?a=1&b=2` renders as `?a=1&amp;b=2`. Use
+  `export_service::rust_string_literal`, which escapes what a Rust literal needs (`\`, `"`,
+  newline, other control characters).
+
+Do not "unify" the two by routing the Leptos branch through `escape_html`;
+`test_leptos_link_does_not_html_escape_data` and `test_html_link_still_uses_entities` pin the two
+directions.
+
 **Exception — `ComponentStyle.custom_css`.** This field is reserved and *not* part of visual
 parity: nothing writes it (the `StyleEditor` has no input for it), nothing reads it, and
 `to_css_string` omits it. Both the canvas and every visual exporter therefore ignore it, which is
@@ -184,10 +200,36 @@ open/close/hidden Escape behaviour is pinned by the `wasm_tests` module in
   back to a snapshot no other transaction could have moved past. Do not "optimise" this by dropping
   the lock before the write or by cloning outside it — the `concurrent_saves_*` /
   `concurrent_save_and_delete_*` / `failed_persistence_*` tests fail when the lock is removed.
-- **File writes are atomic.** `write_store_atomically` writes a unique temp file in the target
-  directory, `flush` + `sync_all`, then `rename`s onto `data_file`, so a crash cannot leave
-  truncated JSON. Keep the temp file in the same directory (rename is only atomic within a
-  filesystem).
+- **File writes are atomic and the rename is made durable.** `write_store_atomically` writes a
+  unique temp file in the target directory, `flush` + `sync_all`, `rename`s onto `data_file`, and
+  then opens and `sync_all`s the *parent directory*. The last step is not optional: the directory
+  entry that now points at the new file lives in the parent, and on a filesystem that needs an
+  explicit directory fsync (ext4 `data=ordered`, XFS, …) a power loss can replay the old entry even
+  though `rename` returned success. Keep the temp file in the same directory (rename is only
+  atomic within a filesystem). `sync_parent_dir` is `cfg`-guarded: opening a directory read-only
+  and fsyncing it works on unix and is unsupported on Windows, where it degrades to a logged
+  no-op. `write_syncs_the_parent_directory_and_succeeds` exercises the open + fsync; it cannot
+  simulate a power loss, which is the honest limit of the test.
+- **A failed write is not one thing.** `WriteError` distinguishes `NotPublished` (nothing reached
+  the file, so `Store::commit` rolls the in-memory state back to the pre-transaction snapshot) from
+  `PublishedNotDurable` (the rename already published the new file and only the directory fsync
+  failed). The second case must **not** roll back — that would make memory disagree with a file
+  every reader can already see — but it must still return `Err` so the caller cannot acknowledge a
+  durable save. Do not collapse the two variants; `a_failed_write_rolls_the_state_back` and
+  `a_directory_sync_failure_keeps_the_published_state_and_still_errors` pin both directions, and
+  `set_force_dir_sync_failure` is the test-only hook that reaches the second branch.
+- **A no-op transaction writes nothing.** `Store::commit`'s mutate step returns a `Mutation`, and
+  only `Mutation::Changed` persists; `Mutation::Unchanged` returns immediately *inside* the
+  transaction (while `mutation_lock` is held). A DELETE for an absent id is therefore a 404 even
+  when the storage layer is broken — it must never be a 500 — and the no-op decision must not move
+  out to a check-then-delete, which would add a race. `a_no_op_transaction_never_writes` and the
+  `deleting_a_missing_*` tests pin it.
+- **All four stores share the one `Store`.** `backend/src/store.rs` is the only persistence
+  implementation; the project store (`main.rs`), `templates.rs`, `git.rs` and `analytics.rs` each
+  wrap their own state type in it and mutate through `Store::commit`. Do not reintroduce a
+  `fs::write` of a JSON file in any of them — that is neither atomic nor durable and loses
+  concurrent updates. `concurrent_*_leave_file_matching_memory` and the `*_rolls_back` tests exist
+  per store.
 - **`component_count` has one definition.** `validation::count_components` (recursive) must be used
   by both `save_project`'s response and `list_projects`; the dashboard count is not
   `layout.as_array().len()`. `dashboard_component_count_is_recursive_and_matches_save` pins that
@@ -202,9 +244,13 @@ open/close/hidden Escape behaviour is pinned by the `wasm_tests` module in
   - the query tracks a two-state path (`NotNormalized` → `NormalizedUnchecked`); `Path::starts_with`
     is only a barrier in `NormalizedUnchecked`, and `isSink` accepts **both** states, so a
     `starts_with` check cannot clean a value that never went through `canonicalize`;
-  - only `contains("..")` is a `SanitizerGuard`, and it is a barrier in **every** state — that is
-    the check that actually silences the query, which is why `resolve_data_file` screens the
-    directory and the file name for `..`;
+  - only `contains("..")` is a `SanitizerGuard`, and it is a barrier in **every** state. The
+    component-wise check that replaced it is *not* modelled as a sanitizer, so it does not itself
+    silence the query — what does is the canonicalise-then-rebuild step below, which moves the
+    written value into `NormalizedUnchecked`. Do not "simplify" `resolve_data_file` by dropping the
+    canonicalise/rebuild; the component-wise check alone would not keep the query clean even though
+    it is the correct traversal rule (it accepts `archive..old/`, which `contains` wrongly
+    rejected);
   - rebinding the path only for the containment check is not enough. A `parent()`/`join()` off a
     branch that missed the canonicalize (a freshly created directory, or a name component joined
     onto a canonical parent) reintroduces `NotNormalized` taint, so the checked value has to be the

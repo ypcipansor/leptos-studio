@@ -117,6 +117,38 @@ pub(crate) fn js_string_literal(value: &str) -> String {
     format!("'{escaped}'")
 }
 
+/// Escape `value` for inclusion *inside* a Rust string literal (the surrounding
+/// quotes are added by the caller).
+///
+/// This is deliberately not [`escape_html`]. A Leptos `view!` macro compiles the
+/// string literal straight into Rust data and sets it on the DOM, so HTML
+/// entities are **not** decoded: escaping `&` to `&amp;` would change the
+/// component's runtime value, turning an href of `?a=1&b=2` into
+/// `?a=1&amp;b=2` on the rendered page. What actually has to be escaped is
+/// whatever would end the literal or be reinterpreted by the Rust lexer:
+/// backslash, the double quote, and the control characters that have Rust escape
+/// sequences. The `view!` tokenizer sees the whole quoted literal as one token,
+/// so braces and angle brackets inside it need no special handling.
+///
+/// HTML escaping stays the right tool for the templates that are themselves HTML
+/// (HTML, Vue, Svelte, Tailwind) and for Markdown, where entities *are* decoded.
+pub(crate) fn rust_string_literal(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len() + 8);
+    for c in value.chars() {
+        match c {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            // Any other control character must not appear raw in the literal.
+            c if c.is_control() => escaped.push_str(&format!("\\u{{{:x}}}", c as u32)),
+            c => escaped.push(c),
+        }
+    }
+    escaped
+}
+
 /// Base component CSS embedded into Plain exports so the result is self-contained.
 /// Must not contain double quotes (embedded as a string literal in generated code).
 const EXPORT_CSS: &str = r#"
@@ -241,7 +273,7 @@ impl LeptosCodeGenerator {
                 let label_expr = if let Some(bind) = btn.bindings.get("label") {
                     format!("move || {}.get()", bind)
                 } else {
-                    format!("\"{}\"", btn.label)
+                    format!("\"{}\"", rust_string_literal(&btn.label))
                 };
 
                 let disabled_attr = if let Some(bind) = btn.bindings.get("disabled") {
@@ -314,7 +346,7 @@ impl LeptosCodeGenerator {
                 let content_expr = if let Some(bind) = txt.bindings.get("content") {
                     format!("move || {}.get()", bind)
                 } else {
-                    format!("\"{}\"", txt.content)
+                    format!("\"{}\"", rust_string_literal(&txt.content))
                 };
 
                 output.push_str(&format!(
@@ -371,7 +403,7 @@ impl LeptosCodeGenerator {
                 let placeholder_attr = if let Some(bind) = inp.bindings.get("placeholder") {
                     format!("prop:placeholder=move || {}.get()", bind)
                 } else {
-                    format!("placeholder=\"{}\"", inp.placeholder)
+                    format!("placeholder=\"{}\"", rust_string_literal(&inp.placeholder))
                 };
 
                 let disabled_attr = if let Some(bind) = inp.bindings.get("disabled") {
@@ -433,8 +465,8 @@ impl LeptosCodeGenerator {
                         .map(|o| {
                             format!(
                                 "view! {{ <option value=\"{}\">\"{}\"</option> }}",
-                                o.trim(),
-                                o.trim()
+                                rust_string_literal(o.trim()),
+                                rust_string_literal(o.trim())
                             )
                         })
                         .collect::<Vec<_>>()
@@ -468,7 +500,8 @@ impl LeptosCodeGenerator {
                 if !sel.placeholder.is_empty() {
                     output.push_str(&format!(
                         "{}            <option value=\"\" disabled selected>\"{}\"</option>\n",
-                        indent, sel.placeholder
+                        indent,
+                        rust_string_literal(&sel.placeholder)
                     ));
                 }
 
@@ -608,13 +641,13 @@ impl LeptosCodeGenerator {
                 let src_attr = if let Some(bind) = img.bindings.get("src") {
                     format!("prop:src=move || {}.get()", bind)
                 } else {
-                    format!("src=\"{}\"", img.src)
+                    format!("src=\"{}\"", rust_string_literal(&img.src))
                 };
 
                 let alt_attr = if let Some(bind) = img.bindings.get("alt") {
                     format!("prop:alt=move || {}.get()", bind)
                 } else {
-                    format!("alt=\"{}\"", img.alt)
+                    format!("alt=\"{}\"", rust_string_literal(&img.alt))
                 };
 
                 output.push_str(&format!(
@@ -755,7 +788,7 @@ impl LeptosCodeGenerator {
 
                 signals.push((
                     signal_name.clone(),
-                    format!("\"{}\".to_string()", radio.selected),
+                    format!("\"{}\".to_string()", rust_string_literal(&radio.selected)),
                 ));
 
                 output.push_str(&format!(
@@ -829,8 +862,12 @@ impl LeptosCodeGenerator {
                 }
             }
             CanvasComponent::Link(link) => {
-                let href_value = escape_html(&link.href);
-                let text_value = escape_html(&link.text);
+                // The values go into Rust string literals inside a `view!` macro,
+                // so they are escaped for a Rust literal, *not* as HTML. Escaping
+                // them as HTML would bake entities into the runtime value
+                // (`?a=1&b=2` becoming `?a=1&amp;b=2`).
+                let href_value = rust_string_literal(&link.href);
+                let text_value = rust_string_literal(&link.text);
 
                 let href_attr = if let Some(bind) = link.bindings.get("href") {
                     format!("href=move || {}.get()", bind)
@@ -857,12 +894,15 @@ impl LeptosCodeGenerator {
                 };
 
                 // The canvas applies the link's style and animation; the export
-                // must carry the same inline CSS or a styled link regresses.
+                // must carry the same inline CSS or a styled link regresses. The
+                // CSS goes into a Rust string literal too, so it is escaped as
+                // one — HTML escaping here would corrupt any value containing
+                // `&`.
                 let inline_css = component_inline_css(&link.style, &link.animation);
                 let style_attr = if inline_css.is_empty() {
                     String::new()
                 } else {
-                    format!(" style=\"{}\"", escape_html(&inline_css))
+                    format!(" style=\"{}\"", rust_string_literal(&inline_css))
                 };
 
                 output.push_str(&format!(
@@ -1676,7 +1716,10 @@ mod tests {
             .generate(&[styled_link()], &[])
             .unwrap();
 
-        assert!(code.contains("href=\"https://example.com/guide?a=1&amp;b=2\""));
+        assert!(
+            code.contains("href=\"https://example.com/guide?a=1&b=2\""),
+            "the Leptos href must keep its data (not HTML entities), got:\n{code}"
+        );
         assert!(code.contains("Read the docs"));
         assert!(
             code.contains("color: #2563eb") && code.contains("animation: fadeIn 0.5s"),
@@ -1734,6 +1777,92 @@ mod tests {
             md.contains("[Read the docs](https://example.com/guide?a=1&b=2)"),
             "Markdown must emit a semantic link, got:\n{md}"
         );
+    }
+
+    /// Regression: the Leptos generator escaped the link's href and text as
+    /// HTML, so the entities ended up baked into the generated Rust string
+    /// literal. Leptos sets that literal on the DOM verbatim — entities are not
+    /// decoded — so `?a=1&b=2` rendered as `?a=1&amp;b=2` and a label containing
+    /// `&` gained a literal `&amp;`. The literal must instead be escaped for
+    /// Rust, so the data survives unchanged.
+    #[test]
+    fn test_leptos_link_does_not_html_escape_data() {
+        let mut link = match styled_link() {
+            CanvasComponent::Link(l) => l,
+            _ => unreachable!(),
+        };
+        link.href = "https://example.com/guide?a=1&b=2&c=<3>".to_string();
+        link.text = "A & B".to_string();
+
+        let code = LeptosCodeGenerator::new(ExportPreset::Plain)
+            .generate(&[CanvasComponent::Link(link)], &[])
+            .unwrap();
+
+        assert!(
+            code.contains("href=\"https://example.com/guide?a=1&b=2&c=<3>\""),
+            "the href must reach the Leptos literal unchanged, got:\n{code}"
+        );
+        assert!(
+            code.contains("\"A & B\""),
+            "the link text must reach the Leptos literal unchanged, got:\n{code}"
+        );
+        assert!(
+            !code.contains("&amp;") && !code.contains("&lt;"),
+            "data must not be turned into HTML entities in a Leptos literal, got:\n{code}"
+        );
+    }
+
+    /// The Rust literal escaper must neutralise everything that could end the
+    /// literal or be reinterpreted by the lexer: backslash, double quote and
+    /// newline. The generated module has to stay parseable while the runtime
+    /// value stays identical.
+    #[test]
+    fn test_leptos_link_literal_escapes_for_rust() {
+        let mut link = match styled_link() {
+            CanvasComponent::Link(l) => l,
+            _ => unreachable!(),
+        };
+        link.text = "say \"hi\"\\ then\nnew line".to_string();
+
+        let code = LeptosCodeGenerator::new(ExportPreset::Plain)
+            .generate(&[CanvasComponent::Link(link)], &[])
+            .unwrap();
+
+        assert!(
+            code.contains(r#""say \"hi\"\\ then\nnew line""#),
+            "quotes, backslashes and newlines must be escaped for a Rust literal, got:\n{code}"
+        );
+        assert!(
+            !code.contains("\"say \"hi\"\\ then"),
+            "an unescaped quote must not terminate the literal, got:\n{code}"
+        );
+    }
+
+    /// HTML output is markup, so the data *must* be entity-escaped there — the
+    /// opposite of the Leptos case. This pins that the two contexts stay
+    /// separate rather than one being "fixed" into the other.
+    #[test]
+    fn test_html_link_still_uses_entities() {
+        let mut link = match styled_link() {
+            CanvasComponent::Link(l) => l,
+            _ => unreachable!(),
+        };
+        link.href = "https://example.com/guide?a=1&b=2".to_string();
+        link.text = "<script>alert('x') & more</script>".to_string();
+
+        let html = HtmlCodeGenerator
+            .generate(&[CanvasComponent::Link(link)], &[])
+            .unwrap();
+
+        assert!(
+            html.contains("&amp;"),
+            "an HTML attribute must escape `&` as an entity, got:\n{html}"
+        );
+        assert!(
+            !html.contains("<script>"),
+            "an HTML text node must escape markup, got:\n{html}"
+        );
+        assert!(html.contains("&lt;script&gt;"));
     }
 
     /// JSON is a lossless serialisation, so the link's style and animation must

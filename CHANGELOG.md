@@ -85,7 +85,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `await` (so readers are never blocked by I/O), and the write happens inside the exclusive
   transaction, so write order matches state-change order and a rollback can only touch this
   transaction's own change. The file itself is written atomically — a unique temp file in the same
-  directory, `sync_all`, then `rename` — so a crash cannot leave truncated JSON.
+  directory, `sync_all`, then `rename` — so a crash cannot leave truncated JSON. After the rename
+  the parent directory is opened and `sync_all`ed, so the new directory entry is durable too: on a
+  filesystem that needs an explicit directory fsync a power loss could otherwise replay the old
+  entry and resurrect the previous file even though the API had acknowledged the save. A failure in
+  that final step is reported as `WriteError::PublishedNotDurable` rather than rolled back — the
+  new state is already visible to readers, so restoring memory would make it disagree with the file
+  — but it still surfaces as an error instead of a false success.
+- **`DELETE` for an absent id reported 500 when storage was failing.** `delete_project` (and the
+  template and git-history equivalents) called `Store::commit` unconditionally, so a no-op removal
+  still attempted a write and a broken storage layer turned a request that should be a 404 into a
+  500. The mutation step now returns `Mutation::Changed`/`Unchanged`, and `commit` persists only a
+  change — decided inside the transaction, while the mutation lock is held, so no check-then-delete
+  race is introduced.
+- **Path validation rejected legal names containing `..`.** `resolve_data_file` used a substring
+  test, so a valid name such as `archive..old/projects.json` or `projects..backup.json` was refused.
+  It now rejects only a real `..` path *component* (which is what can walk upwards) while still
+  canonicalising and rebuilding the path, so confinement is preserved and CodeQL reports no new
+  `rust/path-injection` alert.
+- **Templates, git history, and analytics persistence were not transaction-serialised.** The three
+  non-project stores overwrote their JSON with a plain `fs::write` — neither atomic nor durable, and
+  liable to lose a concurrent update. All four stores now share the one `Store` implementation in
+  `backend/src/store.rs` and mutate through `Store::commit`, so they get the same atomic-write,
+  directory-fsync, exclusive-transaction, and rollback guarantees as projects. Each has a
+  concurrency test asserting the file matches memory.
+- **Leptos export HTML-escaped data into Rust string literals.** The Leptos generator passed a
+  link's `href` and text through `escape_html` before embedding them in a `view!` string literal;
+  Leptos sets that literal on the DOM verbatim without decoding entities, so `?a=1&b=2` rendered as
+  `?a=1&amp;b=2`. Literals are now escaped for Rust (`rust_string_literal`), while the markup
+  exporters (HTML, Vue, Svelte, Tailwind) and Markdown keep entity escaping, where it is correct.
 - **The dashboard under-counted nested components.** `save_project` reported a recursive component
   count via `validation::count_components`, but `GET /api/projects` used `layout.as_array().len()`,
   so after a refresh a project with children inside a Container or Card showed only its root count
