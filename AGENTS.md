@@ -117,6 +117,53 @@ cd frontend && trunk build              # produces dist/
 - `cargo test --workspace` also runs integration tests that hit the network/backend; prefer
   `--lib --bins` for a fast local loop.
 
+## Adding a component variant
+
+A new `CanvasComponent` / `ComponentType` variant serialises to a new type tag, and *every* place
+that enumerates the variants must learn about it. Missing one is not a cosmetic gap: the backend
+allowlist gate rejects the whole layout, so the project cannot be saved at all.
+
+Required sites, in order:
+
+1. `frontend/src/domain/component.rs` — the `ComponentType` variant and the component struct.
+2. `backend/src/validation.rs::KNOWN_COMPONENT_TYPES` — the type tag, or `POST /api/projects`
+   answers 422 for any layout containing the new component. `known_component_types_match_the_frontend`
+   reads the frontend enum in a test and fails when this list drifts.
+3. `frontend/src/builder/canvas/renderer.rs` — the canvas rendering, and the type label match.
+4. `frontend/src/builder/breadcrumb.rs` — the label.
+5. The property editor (`frontend/src/builder/property_editors/`) and the tree view.
+6. Every exporter: `export_service.rs` (Leptos, HTML, JSON, Markdown) and `export_advanced.rs`
+   (JSON Schema, TypeScript, React, Vue, Svelte, Tailwind HTML). For an exporter that carries a
+   component's visual settings, go through the shared `component_inline_css` /
+   `style_js_properties` helpers in `export_service.rs` rather than inventing a second
+   representation — a styled component must look the same exported as it does on the canvas.
+   `frontend/src/domain/component.rs`'s `StyleTag`/variant matches and `duplicate_with_new_id` are
+   the other two enumeration sites.
+7. Screenshots / docs, if the component is user-visible.
+
+A component's visual settings (`ComponentStyle` + `Animation`) are part of its semantics, not
+decoration: if the canvas renderer applies them, every visual exporter must too.
+
+## Modals and Escape
+
+A modal's visibility signal is the single source of truth for three things and they must not
+diverge: what renders the modal, what the `use_escape_key` listener is gated on, and what feeds
+`KeyboardHandler`'s `modal_open`. Pass the caller's real `show` signal into a modal component
+(`TemplateGallery`, `ExportModal`, `SaveTemplateModal` all take one); never construct a local
+`RwSignal::new(true)` to hand to `use_escape_key`, because that listener stays armed after the
+modal is hidden and will consume Escape for whatever modal is actually open. The gallery's
+open/close/hidden Escape behaviour is pinned by the `wasm_tests` module in
+`builder/template_gallery.rs`.
+
+## Persistence and tests
+
+- The backend store is `Store { projects, data_file }` in `backend/src/main.rs`. The data file is
+  bundled with the data so tests can point a store at an isolated temp file; `router_for_store`
+  mounts the real project routes against it, and the tests drive `save_project` / `get_project`
+  through HTTP (`tower::ServiceExt::oneshot`) rather than calling helpers directly.
+- Backend tests must never touch `backend/projects.json`. Anything that needs a store creates one
+  over a temp file (`TestStore` in `backend/src/main.rs`).
+
 ## Documentation
 
 - Root `README.md` embeds all 35 screenshots from `docs/screenshots/`. Keep the reference set and

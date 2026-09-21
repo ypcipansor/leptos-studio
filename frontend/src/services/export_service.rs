@@ -1,12 +1,120 @@
-use crate::domain::{Animation, AppError, AppResult, CanvasComponent, Variable, VariableType};
+use crate::domain::{
+    Animation, AppError, AppResult, CanvasComponent, ComponentStyle, Variable, VariableType,
+};
 use crate::state::ExportPreset;
+use crate::utils::escape_html;
 
 /// Helper to generate animation styles
-fn get_animation_css(animation: &Option<Animation>) -> String {
+pub(crate) fn get_animation_css(animation: &Option<Animation>) -> String {
     animation
         .as_ref()
         .map(|a| a.to_css_string())
         .unwrap_or_default()
+}
+
+/// The inline CSS a component's visual settings produce: its [`ComponentStyle`]
+/// plus any animation, in the same order the canvas renderer applies them.
+///
+/// Every visual exporter must go through here for a component's visual settings,
+/// so the exported markup matches the canvas and no exporter invents a second
+/// representation. Empty when the component has neither, so callers can skip the
+/// `style` attribute entirely rather than emit an empty one.
+pub(crate) fn component_inline_css(
+    style: &ComponentStyle,
+    animation: &Option<Animation>,
+) -> String {
+    let anim = get_animation_css(animation);
+    let custom = style.to_css_string();
+    match (anim.is_empty(), custom.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => anim,
+        (true, false) => custom,
+        (false, false) => format!("{anim} {custom}"),
+    }
+}
+
+/// Just the animation value (`fadeIn 0.3s ease-in-out 0s 1 both`), for exporters
+/// that need a bare CSS value rather than a full declaration.
+pub(crate) fn animation_value(animation: &Option<Animation>) -> String {
+    animation
+        .as_ref()
+        .filter(|a| a.animation_type != crate::domain::AnimationType::None)
+        .map(|a| {
+            a.to_css_string()
+                .trim_start_matches("animation:")
+                .trim()
+                .trim_end_matches(';')
+                .to_string()
+        })
+        .unwrap_or_default()
+}
+
+/// [`ComponentStyle`] plus animation as camelCase key/value pairs, the shape a
+/// CSS-in-JS exporter (React's `style={{ … }}`) needs. This is the JS-side twin
+/// of [`component_inline_css`], so both carry every visual setting and a new
+/// `ComponentStyle` field added to one must be added to the other.
+pub(crate) fn style_js_properties(
+    style: &ComponentStyle,
+    animation: &Option<Animation>,
+) -> Vec<(&'static str, String)> {
+    let mut props: Vec<(&'static str, String)> = Vec::new();
+
+    if let Some(v) = &style.padding {
+        props.push(("padding", v.clone()));
+    }
+    if let Some(v) = &style.margin {
+        props.push(("margin", v.clone()));
+    }
+    if let Some(v) = &style.width {
+        props.push(("width", v.clone()));
+    }
+    if let Some(v) = &style.height {
+        props.push(("height", v.clone()));
+    }
+    if let Some(v) = &style.color {
+        props.push(("color", v.clone()));
+    }
+    if let Some(v) = &style.background_color {
+        props.push(("backgroundColor", v.clone()));
+    }
+    if let (Some(color), Some(width)) = (&style.border_color, style.border_width) {
+        props.push(("border", format!("{width}px solid {color}")));
+    }
+    if let Some(radius) = style.border_radius {
+        props.push(("borderRadius", format!("{radius}px")));
+    }
+    if let Some(size) = style.font_size {
+        props.push(("fontSize", format!("{size}px")));
+    }
+    if let Some(v) = &style.font_weight {
+        props.push(("fontWeight", v.clone()));
+    }
+    if let Some(v) = &style.text_align {
+        props.push(("textAlign", v.clone()));
+    }
+    if let Some(v) = &style.display {
+        props.push(("display", v.clone()));
+    }
+    if let Some(v) = &style.flex_direction {
+        props.push(("flexDirection", v.clone()));
+    }
+    if let Some(v) = &style.gap {
+        props.push(("gap", v.clone()));
+    }
+
+    let anim = animation_value(animation);
+    if !anim.is_empty() {
+        props.push(("animation", anim));
+    }
+
+    props
+}
+
+/// A single-quoted JS string literal. Backslash and quote are escaped so a style
+/// value or label cannot terminate the literal and corrupt the generated module.
+pub(crate) fn js_string_literal(value: &str) -> String {
+    let escaped = value.replace('\\', "\\\\").replace('\'', "\\'");
+    format!("'{escaped}'")
 }
 
 /// Base component CSS embedded into Plain exports so the result is self-contained.
@@ -721,14 +829,45 @@ impl LeptosCodeGenerator {
                 }
             }
             CanvasComponent::Link(link) => {
+                let href_value = escape_html(&link.href);
+                let text_value = escape_html(&link.text);
+
                 let href_attr = if let Some(bind) = link.bindings.get("href") {
                     format!("href=move || {}.get()", bind)
                 } else {
-                    format!("href=\"{}\"", link.href)
+                    format!("href=\"{}\"", href_value)
                 };
+
+                let id_attr = if let Some(bind) = link.bindings.get("id") {
+                    format!(" id=move || {}.get()", bind)
+                } else {
+                    String::new()
+                };
+
+                let class_attr = if let Some(bind) = link.bindings.get("custom_css_classes") {
+                    format!(" class=move || format!(\"{{}}\", {}.get())", bind)
+                } else {
+                    String::new()
+                };
+
+                let text_expr = if let Some(bind) = link.bindings.get("text") {
+                    format!("move || {}.get()", bind)
+                } else {
+                    format!("\"{}\"", text_value)
+                };
+
+                // The canvas applies the link's style and animation; the export
+                // must carry the same inline CSS or a styled link regresses.
+                let inline_css = component_inline_css(&link.style, &link.animation);
+                let style_attr = if inline_css.is_empty() {
+                    String::new()
+                } else {
+                    format!(" style=\"{}\"", escape_html(&inline_css))
+                };
+
                 output.push_str(&format!(
-                    "{}        <a {}>{}</a>\n",
-                    indent, href_attr, link.text
+                    "{}        <a {}{}{}{}>{}</a>\n",
+                    indent, href_attr, id_attr, class_attr, style_attr, text_expr
                 ));
             }
         }
@@ -1019,9 +1158,18 @@ impl HtmlCodeGenerator {
                 ));
             }
             CanvasComponent::Link(link) => {
+                let inline_css = component_inline_css(&link.style, &link.animation);
+                let style_attr = if inline_css.is_empty() {
+                    String::new()
+                } else {
+                    format!(" style=\"{}\"", escape_html(&inline_css))
+                };
                 output.push_str(&format!(
-                    "{}<a href=\"{}\">{}</a>\n",
-                    indent, link.href, link.text
+                    "{}<a href=\"{}\"{}>{}</a>\n",
+                    indent,
+                    escape_html(&link.href),
+                    style_attr,
+                    escape_html(&link.text)
                 ));
             }
         }
@@ -1174,8 +1322,15 @@ impl MarkdownCodeGenerator {
                 ));
             }
             CanvasComponent::Link(link) => {
-                output.push_str(&format!("{}- **Link**: {}\n", indent, link.text));
-                output.push_str(&format!("{}  - Href: {}\n", indent, link.href));
+                // Markdown cannot express style or animation, so those are lost
+                // by design; the URL and text are kept as a real Markdown link
+                // rather than a label so the semantics survive.
+                output.push_str(&format!(
+                    "{}- [{}]({})\n",
+                    indent,
+                    escape_html(&link.text),
+                    link.href.replace('(', "%28").replace(')', "%29")
+                ));
             }
         }
 
@@ -1463,5 +1618,133 @@ mod tests {
         assert!(code.contains("<hr"));
         assert!(code.contains("badge-default"));
         assert!(code.contains("<progress"));
+    }
+
+    // ---------------------------------------------------------------------
+    // Link export: a styled/animated Link must keep its visual settings in
+    // every visual format, not collapse to a bare anchor.
+    // ---------------------------------------------------------------------
+
+    /// A link with a non-default URL, non-default text, a clearly visible style
+    /// and an animation — the shape every assertion below checks for.
+    fn styled_link() -> CanvasComponent {
+        use crate::domain::{Animation, AnimationType, ComponentStyle, LinkComponent};
+        CanvasComponent::Link(LinkComponent {
+            id: Default::default(),
+            text: "Read the docs".to_string(),
+            href: "https://example.com/guide?a=1&b=2".to_string(),
+            style: ComponentStyle {
+                color: Some("#2563eb".to_string()),
+                font_size: Some(18),
+                font_weight: Some("bold".to_string()),
+                padding: Some("4px 8px".to_string()),
+                background_color: Some("#f8fafc".to_string()),
+                ..Default::default()
+            },
+            animation: Some(Animation {
+                animation_type: AnimationType::FadeIn,
+                duration: 0.5,
+                delay: 0.0,
+                infinite: false,
+            }),
+            bindings: Default::default(),
+        })
+    }
+
+    #[test]
+    fn test_html_link_export_preserves_style_and_animation() {
+        let html = HtmlCodeGenerator.generate(&[styled_link()], &[]).unwrap();
+
+        assert!(
+            html.contains("href=\"https://example.com/guide?a=1&amp;b=2\""),
+            "the href must be preserved and attribute-escaped, got:\n{html}"
+        );
+        assert!(html.contains("Read the docs"), "the text must be preserved");
+        assert!(
+            html.contains("color: #2563eb") && html.contains("font-size: 18px"),
+            "the ComponentStyle must be exported inline, got:\n{html}"
+        );
+        assert!(
+            html.contains("animation: fadeIn 0.5s"),
+            "the animation must be exported inline, got:\n{html}"
+        );
+    }
+
+    #[test]
+    fn test_leptos_link_export_preserves_style_and_animation() {
+        let code = LeptosCodeGenerator::new(ExportPreset::Plain)
+            .generate(&[styled_link()], &[])
+            .unwrap();
+
+        assert!(code.contains("href=\"https://example.com/guide?a=1&amp;b=2\""));
+        assert!(code.contains("Read the docs"));
+        assert!(
+            code.contains("color: #2563eb") && code.contains("animation: fadeIn 0.5s"),
+            "the Leptos anchor must carry the same inline CSS as the canvas, got:\n{code}"
+        );
+    }
+
+    #[test]
+    fn test_leptos_link_href_binding_is_exported() {
+        let mut link = match styled_link() {
+            CanvasComponent::Link(l) => l,
+            _ => unreachable!(),
+        };
+        link.bindings
+            .insert("href".to_string(), "next_url".to_string());
+
+        let code = LeptosCodeGenerator::new(ExportPreset::Plain)
+            .generate(&[CanvasComponent::Link(link)], &[])
+            .unwrap();
+
+        assert!(
+            code.contains("next_url.get()"),
+            "an href binding must survive into the Leptos export, got:\n{code}"
+        );
+    }
+
+    /// A `<script>` in the text must not be able to inject markup.
+    #[test]
+    fn test_link_export_escapes_text() {
+        let mut link = match styled_link() {
+            CanvasComponent::Link(l) => l,
+            _ => unreachable!(),
+        };
+        link.text = "<script>alert('x')</script>".to_string();
+
+        let html = HtmlCodeGenerator
+            .generate(&[CanvasComponent::Link(link)], &[])
+            .unwrap();
+        assert!(
+            !html.contains("<script>"),
+            "link text must be escaped, got:\n{html}"
+        );
+        assert!(html.contains("&lt;script&gt;"));
+    }
+
+    #[test]
+    fn test_markdown_link_is_semantic() {
+        let md = MarkdownCodeGenerator
+            .generate(&[styled_link()], &[])
+            .unwrap();
+
+        // Markdown cannot carry style or animation; it must at least keep a real
+        // link rather than degrade to a bare label.
+        assert!(
+            md.contains("[Read the docs](https://example.com/guide?a=1&b=2)"),
+            "Markdown must emit a semantic link, got:\n{md}"
+        );
+    }
+
+    /// JSON is a lossless serialisation, so the link's style and animation must
+    /// round-trip through it as structured data.
+    #[test]
+    fn test_json_link_export_keeps_style_and_animation() {
+        let json = JsonCodeGenerator.generate(&[styled_link()], &[]).unwrap();
+
+        assert!(json.contains("\"href\": \"https://example.com/guide?a=1&b=2\""));
+        assert!(json.contains("\"text\": \"Read the docs\""));
+        assert!(json.contains("\"color\": \"#2563eb\""));
+        assert!(json.contains("\"animation_type\": \"FadeIn\""));
     }
 }

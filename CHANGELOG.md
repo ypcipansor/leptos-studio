@@ -76,6 +76,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   under `cfg(test)`, and the canvas assertions compare against a pre-interaction snapshot rather
   than an absolute component count.
 - Removed the duplicate "Image" entry from the default library.
+- **Projects containing a Link could not be saved.** The frontend's `ComponentType` includes `Link`,
+  but the backend's `KNOWN_COMPONENT_TYPES` allowlist did not, so `validate_component` rejected any
+  layout containing a hyperlink as an unknown type and `POST /api/projects` answered **422** — the
+  whole project, not just the link, was lost. `Link` is now in the allowlist, and
+  `known_component_types_match_the_frontend` reads the frontend enum in a test so a future variant
+  cannot silently drift out of sync again.
+- **Exported Links dropped their style and animation.** Every visual exporter (Leptos, HTML, React,
+  Vue, Svelte, Tailwind HTML) emitted a bare `<a href>` while the canvas renderer applied the link's
+  `ComponentStyle` and animation, so a styled link looked different once exported. All of them now
+  emit the same inline CSS/animation as the canvas via shared helpers
+  (`component_inline_css` / `style_js_properties`); Markdown, which cannot express styling, emits a
+  real `[text](url)` link instead of a bare label. href, text, and attribute values are escaped.
+- **The Template Gallery's Escape listener outlived the gallery.** `TemplateGallery` created a local
+  `RwSignal::new(true)` and handed it to `use_escape_key`, so the global listener stayed armed for
+  the component's whole lifetime rather than the gallery's visibility. If the parent ever hid the
+  gallery without unmounting it, Escape kept calling the stale close callback and could steal Escape
+  from another modal. The component now takes the caller's `show` signal — the same one that renders
+  it — and gates the listener on it.
 - `backend/projects.json` restored to its base state: the two screenshot-session demo projects
   (`Admin Dashboard Shell`, `Marketing Landing Page`) are no longer in tracked runtime data.
 

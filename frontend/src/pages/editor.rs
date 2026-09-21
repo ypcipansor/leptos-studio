@@ -306,6 +306,7 @@ pub fn EditorPage() -> impl IntoView {
                     {move || if show_template_gallery.get() {
                         view! {
                             <TemplateGallery
+                                show=show_template_gallery
                                 on_close=move || show_template_gallery.set(false)
                                 on_apply=move |template: crate::services::Template| {
                                     app_state.canvas.record_snapshot(&format!("Apply Template: {}", template.name));
