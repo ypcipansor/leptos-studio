@@ -192,6 +192,28 @@ open/close/hidden Escape behaviour is pinned by the `wasm_tests` module in
   by both `save_project`'s response and `list_projects`; the dashboard count is not
   `layout.as_array().len()`. `dashboard_component_count_is_recursive_and_matches_save` pins that
   save, list, and a reload-from-disk all agree.
+- **The write path is resolved before it is used.** `write_store_atomically` must derive every path
+  it touches from `paths::resolve_data_file(data_file)` — that one value for the rename, its parent
+  for the temporary file — and must not keep using the raw `store.data_file` for any of them.
+  `DATA_FILE` (and the other store paths) is nominally operator config, but CodeQL models the axum
+  `State<Store>` extractor as a remote source, so the store's `data_file` field reaches the
+  filesystem sinks as attacker-controlled. Why the obvious-looking fixes do *not* work, in case
+  this is ever rewritten:
+  - the query tracks a two-state path (`NotNormalized` → `NormalizedUnchecked`); `Path::starts_with`
+    is only a barrier in `NormalizedUnchecked`, and `isSink` accepts **both** states, so a
+    `starts_with` check cannot clean a value that never went through `canonicalize`;
+  - only `contains("..")` is a `SanitizerGuard`, and it is a barrier in **every** state — that is
+    the check that actually silences the query, which is why `resolve_data_file` screens the
+    directory and the file name for `..`;
+  - rebinding the path only for the containment check is not enough. A `parent()`/`join()` off a
+    branch that missed the canonicalize (a freshly created directory, or a name component joined
+    onto a canonical parent) reintroduces `NotNormalized` taint, so the checked value has to be the
+    one that is actually written. Rebuilding the path from the screened text (`PathBuf::from(&dir_text)`,
+    `resolved_dir.join(&*name_text)`) is what keeps the check on the flow path.
+  Pinned by the `resolve_data_file_*` tests in `backend/src/paths.rs`; the CodeQL suite is the
+  end-to-end check. Run it locally with `codeql database create --language=rust` followed by
+  `codeql database analyze --format=sarif-latest … rust-security-and-quality.qls`, and assert the
+  `path-injection` count is zero rather than eyeballing the diff.
 
 ## Documentation
 

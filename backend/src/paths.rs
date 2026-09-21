@@ -10,10 +10,12 @@
 //! The `*_from` functions are pure so the resolution rules can be tested
 //! without touching the environment or starting a server; the thin wrappers
 //! below are the only ones that read environment variables, and they never
-//! write to them.
+//! write to them. [`resolve_data_file`] is the one function here that touches
+//! the filesystem, because canonicalising a directory requires it to exist.
 
 use std::{
     ffi::OsString,
+    io,
     path::{Path, PathBuf},
 };
 
@@ -63,6 +65,89 @@ pub fn data_file(env_var: &str, default_name: &str) -> PathBuf {
 /// Resolve the static asset directory from `STATIC_DIR`.
 pub fn static_dir() -> PathBuf {
     static_dir_from(std::env::var_os("STATIC_DIR"), &repo_root())
+}
+
+/// Resolve the single file a store persists to, confined to the directory that
+/// names it.
+///
+/// The nomination comes from an environment variable (`DATA_FILE`,
+/// `TEMPLATES_FILE`, …). That is operator configuration rather than request
+/// data, but it still decides which file the process overwrites, so it is
+/// resolved rather than trusted:
+///
+/// * a `..` component is refused in both the directory and the file name, so the
+///   configured path cannot walk upwards;
+/// * the directory is created if needed and then canonicalised, so symlinks and
+///   `.` segments in it are resolved *before* anything is written, and the
+///   resolved directory is the one the file is taken to live in;
+/// * the file name must be a single ordinary component and must not already be a
+///   directory, so the result is a file directly inside that directory.
+///
+/// Every caller must derive the paths it writes from the returned value — the
+/// parent for the temporary file, the value itself for the rename. Deriving them
+/// from the same resolved path is what makes the confinement hold: a caller that
+/// keeps using the uncanonicalised nomination for one of those writes can still
+/// escape it.
+pub fn resolve_data_file(nominated: &Path) -> io::Result<PathBuf> {
+    // The checks below run on the text form, before any part of the configured
+    // path is handed to the filesystem, so nothing is created or written for a
+    // path that is about to be refused.
+    let dir_text = nominated
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .map(|dir| dir.to_string_lossy().into_owned())
+        .unwrap_or_else(|| ".".to_string());
+    if dir_text.contains("..") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "data file directory must not contain `..`",
+        ));
+    }
+
+    let file_name = nominated.file_name().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "data file must name a file, not a directory",
+        )
+    })?;
+    // `Path::file_name` never yields a path separator, so this cannot contain a
+    // component boundary; the check rules out a literal `..` name.
+    let name_text = file_name.to_string_lossy();
+    if name_text.contains("..") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "data file name must not contain `..`",
+        ));
+    }
+
+    // Rebuilt from the checked text, so the path used from here on is the one
+    // that was validated rather than the nomination it came from.
+    let dir = PathBuf::from(&dir_text);
+    std::fs::create_dir_all(&dir)?;
+
+    // Resolves `.` and symlinks, so the directory decided on here is the one the
+    // write actually lands in.
+    let resolved_dir = dir.canonicalize()?;
+    let resolved = resolved_dir.join(&*name_text);
+    // `resolved_dir` is canonical and the name is a single component, so the file
+    // is a direct child by construction; stating the containment is what pins the
+    // guarantee for readers and analysers alike.
+    if !resolved.starts_with(&resolved_dir) {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "data file escapes its directory",
+        ));
+    }
+    // A nominated directory would otherwise be written to as a file *inside
+    // itself*, which is never what the configuration meant.
+    if resolved.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "data file must name a file, not an existing directory",
+        ));
+    }
+
+    Ok(resolved)
 }
 
 #[cfg(test)]
@@ -162,5 +247,66 @@ mod tests {
             static_dir_from(Some("some/where".into()), &repo_root()),
             PathBuf::from("some/where")
         );
+    }
+
+    /// A unique scratch directory, removed on drop so a test leaves nothing
+    /// behind.
+    struct TempDir(std::path::PathBuf);
+
+    impl TempDir {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "leptos-studio-paths-{}-{}",
+                std::process::id(),
+                uuid::Uuid::new_v4()
+            ));
+            std::fs::create_dir_all(&path).expect("scratch directory must be creatable");
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// The ordinary case: the file keeps its name and gains a resolved absolute
+    /// directory, so a store configured with a relative path still lands where
+    /// its parent says.
+    #[test]
+    fn resolve_data_file_confines_the_file_to_its_directory() {
+        let scratch = TempDir::new();
+        let nominated = scratch.0.join("nested").join("projects.json");
+
+        let resolved = resolve_data_file(&nominated).expect("a plain file name must resolve");
+
+        assert_eq!(resolved.file_name().unwrap(), "projects.json");
+        assert_eq!(
+            resolved.parent().unwrap(),
+            scratch.0.join("nested").canonicalize().unwrap(),
+            "the directory must be resolved and created"
+        );
+        assert!(scratch.0.join("nested").is_dir());
+    }
+
+    /// `..` is refused before anything is written, so a configured path cannot
+    /// walk upwards out of the directory it names.
+    #[test]
+    fn resolve_data_file_rejects_dot_dot_in_the_directory() {
+        let scratch = TempDir::new();
+        let inner = scratch.0.join("inner");
+        std::fs::create_dir_all(&inner).unwrap();
+
+        assert!(resolve_data_file(&inner.join("..").join("projects.json")).is_err());
+    }
+
+    /// A trailing directory reference is not a file name: accepting it would let
+    /// the resolved path escape the directory that was canonicalised.
+    #[test]
+    fn resolve_data_file_rejects_a_path_without_a_file_name() {
+        let scratch = TempDir::new();
+        assert!(resolve_data_file(&scratch.0).is_err());
+        assert!(resolve_data_file(&scratch.0.join("..")).is_err());
     }
 }

@@ -147,35 +147,6 @@ fn load_store() -> HashMap<String, serde_json::Value> {
     HashMap::new()
 }
 
-fn validate_store_path(data_file: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
-    let base_dir = std::path::Path::new("./data");
-    let base_canon = std::fs::canonicalize(base_dir).or_else(|_| {
-        std::fs::create_dir_all(base_dir)?;
-        std::fs::canonicalize(base_dir)
-    })?;
-
-    let candidate = if data_file.is_absolute() {
-        data_file.to_path_buf()
-    } else {
-        base_canon.join(data_file)
-    };
-
-    if let Some(parent) = candidate.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    let parent = candidate.parent().unwrap_or(&base_canon);
-    let parent_canon = std::fs::canonicalize(parent)?;
-    if !parent_canon.starts_with(&base_canon) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            "data file path escapes storage directory",
-        ));
-    }
-
-    Ok(candidate)
-}
-
 /// Persist the store to disk atomically.
 ///
 /// Serialises the map, writes it to a temporary file in the *same* directory
@@ -191,45 +162,15 @@ async fn write_store_atomically(
     projects: &HashMap<String, serde_json::Value>,
 ) -> std::io::Result<()> {
     let data = serde_json::to_vec_pretty(projects)?;
-    let safe_data_file = validate_store_path(data_file)?;
 
+    // Confine the write to the directory the store was configured with. Every
+    // path below — the directory, the temporary file and the rename target — is
+    // derived from this resolved value, so none of them can be redirected
+    // elsewhere by a `..` or a symlink in the configured name.
+    let safe_data_file = paths::resolve_data_file(data_file)?;
     let dir = safe_data_file
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."));
-
-    // Ensure writes stay inside the process working directory tree.
-    let safe_base = std::env::current_dir()?.canonicalize()?;
-    let candidate_dir = if dir.is_absolute() {
-        dir.to_path_buf()
-    } else {
-        safe_base.join(dir)
-    };
-    let normalized_dir = if candidate_dir.exists() {
-        candidate_dir.canonicalize()?
-    } else if let Some(parent) = candidate_dir.parent() {
-        let normalized_parent = if parent.exists() {
-            parent.canonicalize()?
-        } else {
-            safe_base.clone()
-        };
-        let leaf = candidate_dir
-            .file_name()
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid data directory"))?;
-        normalized_parent.join(leaf)
-    } else {
-        safe_base.clone()
-    };
-
-    if !normalized_dir.starts_with(&safe_base) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            "data file path escapes allowed base directory",
-        ));
-    }
-
-    if !dir.as_os_str().is_empty() {
-        tokio::fs::create_dir_all(dir).await?;
-    }
 
     // Unique per write so concurrent writers (in different processes) cannot
     // clobber each other's temp file.
