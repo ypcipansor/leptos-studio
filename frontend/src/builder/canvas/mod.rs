@@ -1,6 +1,8 @@
 use crate::builder::breadcrumb::BreadcrumbNavigation;
 use crate::builder::canvas::renderer::ComponentRenderer;
-use crate::builder::component_library::create_canvas_component;
+use crate::builder::component_library::{
+    create_canvas_component, create_canvas_component_from_payload,
+};
 use crate::builder::context_menu::ContextMenu;
 use crate::domain::ComponentId;
 use crate::state::app_state::AppState;
@@ -24,7 +26,10 @@ pub fn handle_drop(ev: ev::DragEvent, _target_id: Option<ComponentId>, app_state
         if let Ok(component_type_str) = dt.get_data("component")
             && !component_type_str.is_empty()
         {
-            if let Some(new_component) = create_canvas_component(&component_type_str) {
+            if let Some(new_component) = create_canvas_component_from_payload(
+                &component_type_str,
+                &app_state.ui.component_library.get_untracked(),
+            ) {
                 if let Some(target) = _target_id {
                     app_state.canvas.add_child_component(&target, new_component);
                 } else {
@@ -80,10 +85,10 @@ pub fn Canvas() -> impl IntoView {
             if let Some(window) = web_sys::window()
                 && let Ok(Some(name)) =
                     window.prompt_with_message("Enter name for custom component:")
-                && !name.is_empty()
             {
                 let lib_comp = crate::builder::component_library::LibraryComponent {
-                    name: name.clone(),
+                    id: crate::builder::component_library::new_library_id(),
+                    name,
                     kind: comp.component_type().to_string(),
                     category: "Custom".to_string(),
                     description: Some("User saved component".to_string()),
@@ -91,13 +96,34 @@ pub fn Canvas() -> impl IntoView {
                     props_schema: None, // Simplified
                 };
 
-                app_state.ui.custom_components.update(|c| c.push(lib_comp));
-                app_state
-                    .ui
-                    .notify(crate::state::app_state::Notification::success(format!(
-                        "Saved '{}' to custom components",
-                        name
-                    )));
+                let mut custom = app_state.ui.custom_components.get();
+                let mut library = app_state.ui.component_library.get();
+                match crate::builder::component_library::ComponentRegistry::add_custom(
+                    &mut custom,
+                    &mut library,
+                    lib_comp,
+                ) {
+                    Ok(()) => {
+                        let saved_name = custom.last().map(|c| c.name.clone()).unwrap_or_default();
+                        app_state.ui.custom_components.set(custom);
+                        app_state.ui.component_library.set(library);
+                        app_state
+                            .ui
+                            .notify(crate::state::app_state::Notification::success(format!(
+                                "Saved '{}' to the Custom category",
+                                saved_name
+                            )));
+                    }
+                    // A blank or duplicate name must not silently create an
+                    // entry the palette cannot tell apart from another one.
+                    Err(err) => {
+                        app_state
+                            .ui
+                            .notify(crate::state::app_state::Notification::warning(
+                                err.message(),
+                            ));
+                    }
+                }
             }
         }
     };
@@ -106,7 +132,7 @@ pub fn Canvas() -> impl IntoView {
     let on_canvas_click = move |ev: ev::MouseEvent| {
         // Only deselect if clicking the canvas background directly
         let target = event_target::<web_sys::HtmlElement>(&ev);
-        if target.id() == "main-canvas" {
+        if target.id() == "canvas-surface" {
             app_state.canvas.clear_selection();
         }
     };
@@ -134,7 +160,7 @@ pub fn Canvas() -> impl IntoView {
             return;
         }
         let target = event_target::<web_sys::HtmlElement>(&ev);
-        if target.id() != "main-canvas" {
+        if target.id() != "canvas-surface" {
             return;
         }
         if let Some(area) = canvas_area_element() {
@@ -231,13 +257,13 @@ pub fn Canvas() -> impl IntoView {
             on:mouseleave=on_pan_end
         >
             <div
-                class="canvas-area"
+                class="canvas-dropzone"
                 on:click=on_canvas_click
                 on:dragover=handle_drag_over
                 on:drop=move |ev| handle_drop(ev, None, app_state)
             >
                 <div
-                    id="main-canvas"
+                    id="canvas-surface"
                     node_ref=canvas_ref
                     class="canvas-surface"
                     class:preview-active=move || app_state.ui.preview_mode.get()

@@ -46,6 +46,7 @@ fn component_type_str(component: &CanvasComponent) -> String {
         ComponentType::Switch => "Switch".to_string(),
         ComponentType::Badge => "Badge".to_string(),
         ComponentType::Progress => "Progress".to_string(),
+        ComponentType::Link => "Link".to_string(),
     }
 }
 
@@ -71,6 +72,7 @@ fn component_name(component: &CanvasComponent) -> String {
         CanvasComponent::Switch(c) => c.label.clone(),
         CanvasComponent::Badge(c) => c.text.clone(),
         CanvasComponent::Progress(_) => "Progress".to_string(),
+        CanvasComponent::Link(l) => l.text.clone(),
     }
 }
 

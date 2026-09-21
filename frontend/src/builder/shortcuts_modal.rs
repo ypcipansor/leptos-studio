@@ -4,16 +4,36 @@ use leptos::prelude::*;
 
 #[component]
 pub fn ShortcutsModal() -> impl IntoView {
+    use crate::builder::hooks::use_escape_key::use_escape_key;
+
     let app_state = AppState::expect_context();
     let show = app_state.ui.show_shortcuts_modal;
 
+    use_escape_key(show, move || show.set(false));
+
     view! {
         <Show when=move || show.get()>
-            <div class="modal-backdrop" on:click=move |_| show.set(false)>
-                <div class="modal-content shortcuts-modal" on:click=move |ev: web_sys::MouseEvent| ev.stop_propagation()>
+            <div
+                class="modal-backdrop"
+                role="presentation"
+                on:click=move |_| show.set(false)
+            >
+                <div
+                    class="modal-content shortcuts-modal"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="shortcuts-modal-title"
+                    on:click=move |ev: web_sys::MouseEvent| ev.stop_propagation()
+                >
                     <div class="modal-header">
-                        <h3>"Keyboard Shortcuts"</h3>
-                        <button class="close-btn" on:click=move |_| show.set(false)>"×"</button>
+                        <h3 id="shortcuts-modal-title">"Keyboard Shortcuts"</h3>
+                        <button
+                            class="close-btn"
+                            aria-label="Close keyboard shortcuts"
+                            on:click=move |_| show.set(false)
+                        >
+                            "×"
+                        </button>
                     </div>
                     <div class="modal-body">
                         <div class="shortcuts-grid">

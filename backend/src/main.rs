@@ -5,15 +5,28 @@ use axum::{
     routing::{delete, get},
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, net::SocketAddr, path::Path as FilePath, sync::Arc};
-use tokio::sync::RwLock;
+use std::{collections::HashMap, net::SocketAddr};
+
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 
 mod analytics;
 mod git;
+mod paths;
+mod store;
 mod templates;
 mod validation;
+
+/// The project state: id → serialized project JSON.
+type Projects = HashMap<String, serde_json::Value>;
+
+/// The project store.
+///
+/// The mutation/persistence transaction (serialised mutation, atomic ordered
+/// write, rollback) lives in [`store::Store`], shared with every other backend
+/// store so the guarantees cannot drift between them. This alias keeps the
+/// project handlers reading naturally.
+type Store = store::Store<Projects>;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct ProjectMetadata {
@@ -23,33 +36,36 @@ struct ProjectMetadata {
     component_count: usize,
 }
 
-type Store = Arc<RwLock<HashMap<String, serde_json::Value>>>;
-
-fn get_data_file() -> String {
-    std::env::var("DATA_FILE").unwrap_or_else(|_| "projects.json".to_string())
+fn get_data_file() -> std::path::PathBuf {
+    paths::data_file("DATA_FILE", "projects.json")
 }
 
 // Load store synchronously at startup (acceptable blocking)
 fn load_store() -> HashMap<String, serde_json::Value> {
     let path = get_data_file();
-    if FilePath::new(&path).exists() {
+    if path.exists() {
         if let Ok(file) = std::fs::File::open(&path) {
             let reader = std::io::BufReader::new(file);
             if let Ok(map) = serde_json::from_reader(reader) {
-                tracing::info!("Loaded projects from {}", path);
+                tracing::info!("Loaded projects from {}", path.display());
                 return map;
             }
         }
-        tracing::error!("Failed to load projects from {}", path);
+        tracing::error!("Failed to load projects from {}", path.display());
     }
     HashMap::new()
 }
 
-// Save store asynchronously
-async fn save_store(store: &HashMap<String, serde_json::Value>) -> std::io::Result<()> {
-    let path = get_data_file();
-    let data = serde_json::to_vec_pretty(store)?;
-    tokio::fs::write(&path, data).await
+/// The project CRUD routes for a given store. Shared by `main` and the
+/// integration-style tests so both exercise the exact same handlers.
+fn router_for_store(store: Store) -> Router {
+    Router::new()
+        .route("/api/projects", get(list_projects).post(save_project))
+        .route(
+            "/api/projects/{id}",
+            get(get_project).delete(delete_project),
+        )
+        .with_state(store)
 }
 
 #[tokio::main]
@@ -58,16 +74,14 @@ async fn main() {
     tracing_subscriber::fmt::init();
 
     let initial_data = load_store();
-    let store = Arc::new(RwLock::new(initial_data));
+    let store = Store::new(initial_data, get_data_file());
 
-    let initial_templates = templates::load_templates();
-    let template_store = Arc::new(RwLock::new(initial_templates));
-
-    let initial_git = git::load_git_data();
-    let git_store = Arc::new(RwLock::new(initial_git));
-
-    let initial_analytics = analytics::load_analytics();
-    let analytics_store = Arc::new(RwLock::new(initial_analytics));
+    // Every store shares the same persistence transaction (serialised mutation,
+    // atomic ordered write, rollback, directory sync) so the guarantees cannot
+    // drift between them.
+    let template_store = templates::store();
+    let git_store = git::store();
+    let analytics_store = analytics::store();
 
     // CORS
     // Use CORS_ORIGIN env var if set, otherwise default to Any (for dev)
@@ -90,13 +104,7 @@ async fn main() {
             .allow_headers(Any)
     };
 
-    let project_routes = Router::new()
-        .route("/api/projects", get(list_projects).post(save_project))
-        .route(
-            "/api/projects/{id}",
-            get(get_project).delete(delete_project),
-        )
-        .with_state(store);
+    let project_routes = router_for_store(store);
 
     let template_routes = Router::new()
         .route(
@@ -122,9 +130,13 @@ async fn main() {
         )
         .with_state(analytics_store);
 
-    // Serve frontend static files
-    // Fallback to index.html for SPA routing
-    let static_files = ServeDir::new("dist").fallback(ServeFile::new("dist/index.html"));
+    // Serve frontend static files, resolved against the repository root so the
+    // backend works from any working directory. Fallback to index.html for SPA
+    // routing.
+    let static_dir = paths::static_dir();
+    tracing::info!("Serving static files from {}", static_dir.display());
+    let static_files =
+        ServeDir::new(&static_dir).fallback(ServeFile::new(static_dir.join("index.html")));
 
     let app = Router::new()
         .merge(project_routes)
@@ -141,7 +153,7 @@ async fn main() {
 }
 
 async fn list_projects(State(store): State<Store>) -> Json<Vec<ProjectMetadata>> {
-    let store = store.read().await;
+    let store = store.state.read().await;
     let mut projects: Vec<ProjectMetadata> = store
         .values()
         .map(|p| {
@@ -161,8 +173,7 @@ async fn list_projects(State(store): State<Store>) -> Json<Vec<ProjectMetadata>>
                 .unwrap_or(0.0);
             let component_count = p
                 .get("layout")
-                .and_then(|l| l.as_array())
-                .map(|a| a.len())
+                .map(validation::count_components)
                 .unwrap_or(0);
 
             ProjectMetadata {
@@ -227,20 +238,22 @@ async fn save_project(
         .map(validation::count_components)
         .unwrap_or(0);
 
+    // The insert and the resulting file write are one serialised transaction, so
+    // a concurrent save/delete can neither lose this project nor persist a stale
+    // snapshot after it. On a write failure the whole insert is rolled back —
+    // and because no other transaction can run in between, that rollback cannot
+    // discard another request's successful commit.
+    let insert_id = id.clone();
+    match store
+        .commit(move |projects| {
+            projects.insert(insert_id, payload);
+            store::Mutation::Changed(())
+        })
+        .await
     {
-        let mut guard = store.write().await;
-        // Insert into memory first, capture old value for rollback
-        let old_value = guard.insert(id.clone(), payload);
-
-        // Try to save to disk
-        if let Err(e) = save_store(&guard).await {
+        Ok(_) => {}
+        Err(e) => {
             tracing::error!("Failed to save store: {}", e);
-            // Rollback: Restore old value or remove if it was a new insert
-            if let Some(v) = old_value {
-                guard.insert(id, v);
-            } else {
-                guard.remove(&id);
-            }
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     }
@@ -257,7 +270,7 @@ async fn get_project(
     Path(id): Path<String>,
     State(store): State<Store>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let store = store.read().await;
+    let store = store.state.read().await;
     if let Some(project) = store.get(&id) {
         Ok(Json(project.clone()))
     } else {
@@ -266,17 +279,660 @@ async fn get_project(
 }
 
 async fn delete_project(Path(id): Path<String>, State(store): State<Store>) -> StatusCode {
-    let mut guard = store.write().await;
-
-    if let Some(removed_project) = guard.remove(&id) {
-        if let Err(e) = save_store(&guard).await {
+    // Same transaction path as `save_project`: the removal and its file write are
+    // serialised, and a write failure restores the project exactly.
+    //
+    // The mutate step reports whether it actually removed anything. An id that is
+    // not present is a no-op, so `commit` skips persistence entirely — a DELETE
+    // for a missing project must answer 404 even when the storage layer is
+    // broken, instead of surfacing the storage failure as a 500. Deciding that
+    // inside the transaction (with the mutation lock held) rather than with a
+    // check-then-delete also keeps it free of the race that pattern would add.
+    match store
+        .commit(|projects| match projects.remove(&id) {
+            Some(_removed) => store::Mutation::Changed(()),
+            None => store::Mutation::Unchanged(()),
+        })
+        .await
+    {
+        Ok(store::Mutation::Changed(())) => StatusCode::NO_CONTENT,
+        Ok(store::Mutation::Unchanged(())) => StatusCode::NOT_FOUND,
+        Err(e) => {
             tracing::error!("Failed to save store after delete: {}", e);
-            // Rollback: put it back
-            guard.insert(id, removed_project);
-            return StatusCode::INTERNAL_SERVER_ERROR;
+            StatusCode::INTERNAL_SERVER_ERROR
         }
-        StatusCode::NO_CONTENT
-    } else {
-        StatusCode::NOT_FOUND
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::{Body, to_bytes};
+    use axum::http::{Request, StatusCode};
+    use serde_json::json;
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    /// A store backed by a unique temp file, so tests never touch the tracked
+    /// `backend/projects.json`.
+    struct TestStore {
+        store: Store,
+        path: std::path::PathBuf,
+    }
+
+    impl TestStore {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "leptos-studio-test-{}-{}-{}.json",
+                name,
+                std::process::id(),
+                uuid::Uuid::new_v4()
+            ));
+            let store = Store::new(HashMap::new(), path.clone());
+            Self { store, path }
+        }
+    }
+
+    impl Drop for TestStore {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+
+    /// POST a project payload through the real router and return the status.
+    async fn post_project(store: Store, payload: serde_json::Value) -> StatusCode {
+        let app = router_for_store(store);
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/projects")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .expect("request must build");
+
+        app.oneshot(request)
+            .await
+            .expect("router must respond")
+            .status()
+    }
+
+    /// Drive the real router and return the status plus the response body.
+    async fn request(
+        store: Store,
+        method: &str,
+        uri: &str,
+        body: Option<serde_json::Value>,
+    ) -> (StatusCode, Vec<u8>) {
+        let app = router_for_store(store);
+        let mut builder = Request::builder().method(method).uri(uri);
+        let body = match body {
+            Some(value) => {
+                builder = builder.header("content-type", "application/json");
+                Body::from(value.to_string())
+            }
+            None => Body::empty(),
+        };
+
+        let response = app
+            .oneshot(builder.body(body).expect("request must build"))
+            .await
+            .expect("router must respond");
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body must be readable");
+        (status, bytes.to_vec())
+    }
+
+    fn project_payload(id: &str, name: &str) -> serde_json::Value {
+        json!({
+            "id": id,
+            "name": name,
+            "last_modified": 1.0,
+            "layout": [ { "Link": {
+                "id": id,
+                "text": name,
+                "href": "https://example.com",
+                "animation": null,
+                "bindings": {},
+                "style": {}
+            } } ]
+        })
+    }
+
+    /// Read the on-disk store and parse it, asserting it is a complete document.
+    fn read_data_file(path: &std::path::Path) -> HashMap<String, serde_json::Value> {
+        let bytes = std::fs::read(path).expect("data file must exist");
+        serde_json::from_slice(&bytes).expect("data file must always be valid JSON")
+    }
+
+    fn stored_ids(path: &std::path::Path) -> Vec<String> {
+        let mut ids: Vec<String> = read_data_file(path).keys().cloned().collect();
+        ids.sort();
+        ids
+    }
+
+    /// The in-memory ids, through the real `GET /api/projects` handler.
+    async fn listed_ids(store: Store) -> Vec<String> {
+        let (status, body) = request(store, "GET", "/api/projects", None).await;
+        assert_eq!(status, StatusCode::OK);
+        let mut ids: Vec<String> = serde_json::from_slice::<Vec<ProjectMetadata>>(&body)
+            .expect("project list must deserialize")
+            .into_iter()
+            .map(|p| p.id)
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    fn link_layout_flow() -> serde_json::Value {
+        json!({
+            "name": "Link Project",
+            "last_modified": 1.0,
+            "layout": [
+                { "Link": {
+                    "id": "0e5b0f3a-0000-4000-8000-000000000001",
+                    "text": "Docs",
+                    "href": "https://example.com",
+                    "animation": null,
+                    "bindings": {},
+                    "style": { "color": "#2563eb" }
+                } },
+                { "Container": { "children": [ { "Link": {
+                    "id": "0e5b0f3a-0000-4000-8000-000000000002",
+                    "text": "Nested",
+                    "href": "https://example.com/nested",
+                    "animation": null,
+                    "bindings": {},
+                    "style": {}
+                } } ] } },
+                { "Card": { "children": [ { "Link": {
+                    "id": "0e5b0f3a-0000-4000-8000-000000000003",
+                    "text": "In a card",
+                    "href": "#anchor",
+                    "animation": null,
+                    "bindings": {},
+                    "style": {}
+                } } ] } }
+            ]
+        })
+    }
+
+    /// Regression: a project whose layout contains a Link was rejected with a
+    /// 422 because `Link` was missing from the backend allowlist. The save must
+    /// now succeed, persist, and survive a reopen.
+    #[tokio::test]
+    async fn saving_a_project_with_links_is_accepted_and_persists() {
+        let test = TestStore::new("link-save");
+
+        let status = post_project(test.store.clone(), link_layout_flow()).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "a layout with Links must be saved, not rejected with 422"
+        );
+
+        // Persisted to disk, with the layout intact.
+        let written: HashMap<String, serde_json::Value> =
+            serde_json::from_slice(&std::fs::read(&test.path).expect("data file must exist"))
+                .expect("data file must be valid JSON");
+        assert_eq!(written.len(), 1, "the project must be persisted");
+
+        let stored = written.values().next().unwrap();
+        let layout = stored
+            .get("layout")
+            .and_then(|l| l.as_array())
+            .expect("layout must be an array");
+        assert_eq!(layout.len(), 3, "every component must persist");
+        assert_eq!(validation::count_components(&json!(layout)), 5);
+
+        // Reopen through the real GET handler.
+        let app = router_for_store(test.store.clone());
+        let id = stored
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/api/projects/{id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("router must respond");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let reopened: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let reopened_layout = reopened.get("layout").and_then(|l| l.as_array()).unwrap();
+        assert_eq!(
+            reopened_layout.len(),
+            3,
+            "the Link layout must reopen intact"
+        );
+        assert!(
+            reopened_layout[0].get("Link").is_some(),
+            "the root Link must survive a reopen"
+        );
+    }
+
+    /// An unknown component type must still be rejected with a 422 — the Link
+    /// fix must not turn validation off.
+    #[tokio::test]
+    async fn saving_a_project_with_an_unknown_type_is_still_rejected() {
+        let test = TestStore::new("unknown-type");
+        let payload = json!({
+            "name": "Bad Project",
+            "last_modified": 1.0,
+            "layout": [ { "Widget": {} } ]
+        });
+
+        let status = post_project(test.store.clone(), payload).await;
+        assert_eq!(
+            status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "an unknown component type must still be rejected"
+        );
+        assert!(
+            !test.path.exists(),
+            "a rejected save must not write the data file"
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // Concurrency: mutation + persistence must be one serialised transaction.
+    // ---------------------------------------------------------------------
+
+    /// Run one request through the *real* router — the same `save_project` /
+    /// `delete_project` handlers production uses — after a barrier so two of
+    /// them overlap. Returns the id and the response status.
+    async fn transact(
+        store: Store,
+        barrier: Arc<tokio::sync::Barrier>,
+        id: &str,
+        delete: bool,
+    ) -> (String, StatusCode) {
+        barrier.wait().await;
+        let uri = if delete {
+            format!("/api/projects/{id}")
+        } else {
+            "/api/projects".to_string()
+        };
+        let payload = (!delete).then(|| project_payload(id, id));
+        let (status, _) =
+            request(store, if delete { "DELETE" } else { "POST" }, &uri, payload).await;
+        (id.to_string(), status)
+    }
+
+    /// Spawn two requests on the multi-threaded runtime so they run on real OS
+    /// threads and genuinely interleave, and return their results.
+    async fn race(
+        store: Store,
+        a: (&'static str, bool),
+        b: (&'static str, bool),
+    ) -> ((String, StatusCode), (String, StatusCode)) {
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let first = tokio::spawn(transact(store.clone(), barrier.clone(), a.0, a.1));
+        let second = tokio::spawn(transact(store, barrier, b.0, b.1));
+        (
+            first.await.expect("task must not panic"),
+            second.await.expect("task must not panic"),
+        )
+    }
+
+    /// Two concurrent POSTs must both survive — in memory *and* after the file
+    /// is read back. With a read-modify-write that dropped the state lock before
+    /// writing, the second writer could persist a snapshot that lacked the
+    /// first project (a lost update), or the two writes could land out of order.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_saves_do_not_lose_a_project() {
+        let test = TestStore::new("concurrent-saves");
+
+        // Repeated so a genuine race has many chances to interleave.
+        for _ in 0..20 {
+            test.store.state.write().await.clear();
+            let ((a_id, a_status), (b_id, b_status)) =
+                race(test.store.clone(), ("proj-a", false), ("proj-b", false)).await;
+            assert_eq!(
+                (a_status, b_status),
+                (StatusCode::OK, StatusCode::OK),
+                "both saves must be accepted"
+            );
+            assert_ne!(a_id, b_id);
+
+            let expected = vec!["proj-a".to_string(), "proj-b".to_string()];
+            assert_eq!(
+                listed_ids(test.store.clone()).await,
+                expected,
+                "both projects must be visible in memory"
+            );
+            assert_eq!(
+                stored_ids(&test.path),
+                expected,
+                "both projects must be persisted — neither save may be lost"
+            );
+        }
+    }
+
+    /// A concurrent POST and DELETE must leave the file agreeing exactly with
+    /// the in-memory state, whichever order the transactions actually ran in.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_save_and_delete_leave_file_matching_memory() {
+        for _ in 0..25 {
+            let test = TestStore::new("save-delete");
+            // Seed the project the delete targets, then remove it — the end
+            // state must be the same as if the seed had never existed.
+            test.store
+                .commit(|projects| {
+                    projects.insert("proj-x".to_string(), project_payload("proj-x", "X"));
+                    store::Mutation::Changed(())
+                })
+                .await
+                .expect("seed must persist");
+
+            let ((_, save_status), (_, delete_status)) =
+                race(test.store.clone(), ("proj-y", false), ("proj-x", true)).await;
+            assert_eq!(
+                save_status,
+                StatusCode::OK,
+                "the concurrent save must succeed"
+            );
+            assert_eq!(
+                delete_status,
+                StatusCode::NO_CONTENT,
+                "the concurrent delete must succeed"
+            );
+
+            // Both effects must be present in memory and on disk, in any order.
+            let memory = listed_ids(test.store.clone()).await;
+            let disk = stored_ids(&test.path);
+            assert_eq!(
+                memory, disk,
+                "the persisted file must match the in-memory state exactly"
+            );
+            assert_eq!(
+                memory,
+                vec!["proj-y".to_string()],
+                "the save must land and the delete must not be undone"
+            );
+
+            // The file is a complete document and contains no leftover temp files.
+            let leftovers: Vec<_> = std::fs::read_dir(test.path.parent().unwrap())
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.starts_with(".save-delete") || n.starts_with(".proj"))
+                .collect();
+            assert!(
+                leftovers.is_empty(),
+                "temp files left behind: {leftovers:?}"
+            );
+        }
+    }
+
+    /// A DELETE for an id that is not there is a no-op: it must answer 404
+    /// without attempting a persistence write, so a failing storage layer cannot
+    /// turn it into a 500. The fail hook proves no write was attempted — a
+    /// write would have failed and produced a 500.
+    #[tokio::test]
+    async fn deleting_a_missing_project_is_404_without_writing() {
+        let test = TestStore::new("delete-missing");
+        test.store.set_fail_hook(Some(Box::new(|_| true)));
+
+        let (status, _) = request(
+            test.store.clone(),
+            "DELETE",
+            "/api/projects/does-not-exist",
+            None,
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "a missing project must be 404 even when storage is failing"
+        );
+        assert!(
+            !test.path.exists(),
+            "a no-op delete must not write the data file at all"
+        );
+    }
+
+    /// The same no-op rule must hold when the file already exists: a delete for an
+    /// unknown id must leave the existing bytes byte-identical rather than
+    /// rewriting them.
+    #[tokio::test]
+    async fn deleting_a_missing_project_leaves_existing_bytes_untouched() {
+        let test = TestStore::new("delete-missing-existing");
+        assert_eq!(
+            post_project(test.store.clone(), project_payload("keep", "Keep")).await,
+            StatusCode::OK
+        );
+        let before = std::fs::read(&test.path).expect("seed must be persisted");
+
+        let (status, _) = request(test.store.clone(), "DELETE", "/api/projects/nope", None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            std::fs::read(&test.path).unwrap(),
+            before,
+            "a no-op delete must not rewrite the file"
+        );
+    }
+
+    /// A DELETE for an id that *is* present must still fail loudly (500) when the
+    /// write fails, and the removal must be rolled back so memory and disk agree.
+    #[tokio::test]
+    async fn deleting_an_existing_project_rolls_back_on_a_failed_write() {
+        let test = TestStore::new("delete-existing-fail");
+        assert_eq!(
+            post_project(test.store.clone(), project_payload("victim", "Victim")).await,
+            StatusCode::OK
+        );
+        let before = std::fs::read(&test.path).unwrap();
+        test.store.set_fail_hook(Some(Box::new(|_| true)));
+
+        let (status, _) = request(test.store.clone(), "DELETE", "/api/projects/victim", None).await;
+        assert_eq!(
+            status,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "a failing write on a real delete must surface as 500"
+        );
+        assert_eq!(
+            listed_ids(test.store.clone()).await,
+            vec!["victim".to_string()],
+            "the failed delete must be rolled back in memory"
+        );
+        assert_eq!(
+            std::fs::read(&test.path).unwrap(),
+            before,
+            "the failed delete must not change the file"
+        );
+    }
+
+    /// A failed persistence must roll the mutation back *without* discarding a
+    /// transaction that committed concurrently. The failing transaction is
+    /// forced deterministically through the fail hook (keyed on the resulting
+    /// state, so only the intended transaction fails) rather than relying on
+    /// scheduler timing.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn failed_persistence_rolls_back_without_clobbering_a_concurrent_commit() {
+        let test = TestStore::new("rollback");
+        // Seed an existing project so the rollback restores a non-empty state.
+        test.store
+            .commit(|projects| {
+                projects.insert("seed".to_string(), project_payload("seed", "Seed"));
+                store::Mutation::Changed(())
+            })
+            .await
+            .expect("seed must persist");
+
+        // Fail any transaction whose resulting state contains "doomed". That is
+        // exactly the doomed transaction — the keeper transaction's resulting
+        // state never contains it, whichever order the two run in, so the keeper
+        // always commits and the doomed one always rolls back.
+        test.store.set_fail_hook(Some(Box::new(
+            |state: &HashMap<String, serde_json::Value>| state.contains_key("doomed"),
+        )));
+
+        let ((_, doomed_status), (_, keeper_status)) =
+            race(test.store.clone(), ("doomed", false), ("keeper", false)).await;
+
+        assert_eq!(
+            doomed_status,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "the injected persistence failure must surface as an error status"
+        );
+        assert_eq!(
+            keeper_status,
+            StatusCode::OK,
+            "the concurrent save must still commit"
+        );
+
+        // The rollback must have restored exactly the pre-doomed state, and must
+        // not have discarded the keeper commit even when the keeper ran first.
+        let memory = listed_ids(test.store.clone()).await;
+        let disk = stored_ids(&test.path);
+        assert_eq!(
+            memory,
+            vec!["keeper".to_string(), "seed".to_string()],
+            "only the committed transaction may be visible, got {memory:?}"
+        );
+        assert_eq!(
+            memory, disk,
+            "the file must match the rolled-back memory state"
+        );
+        assert!(
+            !memory.contains(&"doomed".to_string()),
+            "the failed transaction must not be visible, got {memory:?}"
+        );
+    }
+
+    /// The data file must never be observable half-written: every read while
+    /// concurrent transactions are in flight is a complete JSON document, and
+    /// the file is replaced by rename rather than truncated in place.
+    ///
+    /// A store is seeded first, so once the file exists it must *always* be a
+    /// parseable, non-empty document — a writer that truncated in place would be
+    /// caught observing the emptied window.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn data_file_is_always_complete_json_during_concurrent_writes() {
+        let test = TestStore::new("atomic-writes");
+        test.store
+            .commit(|projects| {
+                projects.insert("seed".to_string(), project_payload("seed", "Seed"));
+                store::Mutation::Changed(())
+            })
+            .await
+            .expect("seed must persist");
+
+        let barrier = Arc::new(tokio::sync::Barrier::new(9));
+
+        // Spawn (not join sequentially) so the writers genuinely overlap.
+        let mut writers = Vec::new();
+        for i in 0..8 {
+            let store = test.store.clone();
+            let barrier = barrier.clone();
+            writers.push(tokio::spawn(async move {
+                barrier.wait().await;
+                let id = format!("proj-{i}");
+                store
+                    .commit(move |projects| {
+                        projects.insert(id.clone(), project_payload(&id, &id));
+                        store::Mutation::Changed(())
+                    })
+                    .await
+                    .expect("write must succeed");
+            }));
+        }
+
+        let reader_path = test.path.clone();
+        let reader = tokio::spawn(async move {
+            barrier.wait().await;
+            // Sample the file continuously while the writers run. The file must
+            // be complete at every instant: never missing, never empty, never
+            // truncated, never partially written.
+            for _ in 0..500 {
+                let bytes =
+                    std::fs::read(&reader_path).expect("the data file must exist once seeded");
+                assert!(
+                    !bytes.is_empty(),
+                    "the data file must never be observed empty (truncated in place)"
+                );
+                serde_json::from_slice::<HashMap<String, serde_json::Value>>(&bytes)
+                    .expect("a partially written file must never be observable");
+                tokio::task::yield_now().await;
+            }
+        });
+
+        for writer in writers {
+            writer.await.expect("writer must not panic");
+        }
+        reader.await.expect("reader must not panic");
+
+        let ids = stored_ids(&test.path);
+        assert_eq!(ids.len(), 9, "every writer must be persisted, got {ids:?}");
+
+        // No temp files left behind.
+        let leftovers: Vec<_> = std::fs::read_dir(test.path.parent().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains("atomic-writes") && n.ends_with(".tmp"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "temp files left behind: {leftovers:?}"
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // Dashboard counts must use the same recursive definition as save.
+    // ---------------------------------------------------------------------
+
+    /// Regression: `list_projects` counted only root components, so a project
+    /// with children inside a Container/Card showed a smaller count after a
+    /// dashboard refresh than the count reported when it was saved.
+    #[tokio::test]
+    async fn dashboard_component_count_is_recursive_and_matches_save() {
+        let test = TestStore::new("nested-count");
+        let layout = link_layout_flow();
+
+        let (status, body) = request(
+            test.store.clone(),
+            "POST",
+            "/api/projects",
+            Some(layout.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let saved: ProjectMetadata =
+            serde_json::from_slice(&body).expect("save response must deserialize");
+
+        let expected = 5; // root Link + Container→Link + Card→Link
+        assert_eq!(
+            saved.component_count, expected,
+            "the save response must report the recursive count"
+        );
+
+        // The dashboard's list must agree with the save response.
+        let (status, body) = request(test.store.clone(), "GET", "/api/projects", None).await;
+        assert_eq!(status, StatusCode::OK);
+        let listed: Vec<ProjectMetadata> = serde_json::from_slice(&body).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(
+            listed[0].component_count, expected,
+            "GET /api/projects must report the same recursive count as save, \
+             not just the number of root components"
+        );
+
+        // And it must still hold after the store is rebuilt from the file.
+        let reloaded = Store::new(read_data_file(&test.path), test.path.clone());
+        let (status, body) = request(reloaded, "GET", "/api/projects", None).await;
+        assert_eq!(status, StatusCode::OK);
+        let after_reload: Vec<ProjectMetadata> = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            after_reload[0].component_count, expected,
+            "the count must survive a reload from disk"
+        );
     }
 }

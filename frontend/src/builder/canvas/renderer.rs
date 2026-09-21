@@ -3,7 +3,8 @@ use crate::builder::drag_drop::DropZone;
 use crate::domain::{
     Animation, BadgeComponent, ButtonComponent, CanvasComponent, CardComponent, CheckboxComponent,
     ContainerComponent, CustomComponent, DividerComponent, ImageComponent, InputComponent,
-    ProgressComponent, RadioGroupComponent, SelectComponent, SwitchComponent, TextComponent,
+    LinkComponent, ProgressComponent, RadioGroupComponent, SelectComponent, SwitchComponent,
+    TextComponent,
 };
 use crate::state::{AppState, CanvasState};
 use leptos::prelude::*;
@@ -64,6 +65,7 @@ pub fn ComponentRenderer(
         crate::domain::ComponentType::Switch => "Switch",
         crate::domain::ComponentType::Badge => "Badge",
         crate::domain::ComponentType::Progress => "Progress",
+        crate::domain::ComponentType::Link => "Link",
     };
 
     view! {
@@ -94,6 +96,7 @@ pub fn ComponentRenderer(
                 CanvasComponent::Switch(switch) => render_switch(switch).into_any(),
                 CanvasComponent::Badge(badge) => render_badge(badge).into_any(),
                 CanvasComponent::Progress(progress) => render_progress(progress).into_any(),
+                CanvasComponent::Link(link) => render_link(link).into_any(),
             }}
         </div>
     }
@@ -647,5 +650,20 @@ fn render_progress(progress: ProgressComponent) -> impl IntoView {
                 view! { <span class="hidden"></span> }.into_any()
             }}
         </div>
+    }
+}
+fn render_link(link: LinkComponent) -> impl IntoView {
+    let anim_style = get_animation_style(&link.animation);
+    let custom_style = link.style.to_css_string();
+
+    view! {
+        <a
+            class="canvas-link"
+            href=link.href
+            style=format!("{} {}", anim_style, custom_style)
+            on:click=|ev| ev.prevent_default()
+        >
+            {link.text}
+        </a>
     }
 }

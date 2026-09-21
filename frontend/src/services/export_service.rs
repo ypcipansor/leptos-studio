@@ -1,12 +1,152 @@
-use crate::domain::{Animation, AppError, AppResult, CanvasComponent, Variable, VariableType};
+use crate::domain::{
+    Animation, AppError, AppResult, CanvasComponent, ComponentStyle, Variable, VariableType,
+};
 use crate::state::ExportPreset;
+use crate::utils::escape_html;
 
 /// Helper to generate animation styles
-fn get_animation_css(animation: &Option<Animation>) -> String {
+pub(crate) fn get_animation_css(animation: &Option<Animation>) -> String {
     animation
         .as_ref()
         .map(|a| a.to_css_string())
         .unwrap_or_default()
+}
+
+/// The inline CSS a component's visual settings produce: its [`ComponentStyle`]
+/// plus any animation, in the same order the canvas renderer applies them.
+///
+/// Every visual exporter must go through here for a component's visual settings,
+/// so the exported markup matches the canvas and no exporter invents a second
+/// representation. Empty when the component has neither, so callers can skip the
+/// `style` attribute entirely rather than emit an empty one.
+pub(crate) fn component_inline_css(
+    style: &ComponentStyle,
+    animation: &Option<Animation>,
+) -> String {
+    let anim = get_animation_css(animation);
+    let custom = style.to_css_string();
+    match (anim.is_empty(), custom.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => anim,
+        (true, false) => custom,
+        (false, false) => format!("{anim} {custom}"),
+    }
+}
+
+/// Just the animation value (`fadeIn 0.3s ease-in-out 0s 1 both`), for exporters
+/// that need a bare CSS value rather than a full declaration.
+pub(crate) fn animation_value(animation: &Option<Animation>) -> String {
+    animation
+        .as_ref()
+        .filter(|a| a.animation_type != crate::domain::AnimationType::None)
+        .map(|a| {
+            a.to_css_string()
+                .trim_start_matches("animation:")
+                .trim()
+                .trim_end_matches(';')
+                .to_string()
+        })
+        .unwrap_or_default()
+}
+
+/// [`ComponentStyle`] plus animation as camelCase key/value pairs, the shape a
+/// CSS-in-JS exporter (React's `style={{ … }}`) needs. This is the JS-side twin
+/// of [`component_inline_css`], so both carry every visual setting and a new
+/// `ComponentStyle` field added to one must be added to the other.
+pub(crate) fn style_js_properties(
+    style: &ComponentStyle,
+    animation: &Option<Animation>,
+) -> Vec<(&'static str, String)> {
+    let mut props: Vec<(&'static str, String)> = Vec::new();
+
+    if let Some(v) = &style.padding {
+        props.push(("padding", v.clone()));
+    }
+    if let Some(v) = &style.margin {
+        props.push(("margin", v.clone()));
+    }
+    if let Some(v) = &style.width {
+        props.push(("width", v.clone()));
+    }
+    if let Some(v) = &style.height {
+        props.push(("height", v.clone()));
+    }
+    if let Some(v) = &style.color {
+        props.push(("color", v.clone()));
+    }
+    if let Some(v) = &style.background_color {
+        props.push(("backgroundColor", v.clone()));
+    }
+    if let (Some(color), Some(width)) = (&style.border_color, style.border_width) {
+        props.push(("border", format!("{width}px solid {color}")));
+    }
+    if let Some(radius) = style.border_radius {
+        props.push(("borderRadius", format!("{radius}px")));
+    }
+    if let Some(size) = style.font_size {
+        props.push(("fontSize", format!("{size}px")));
+    }
+    if let Some(v) = &style.font_weight {
+        props.push(("fontWeight", v.clone()));
+    }
+    if let Some(v) = &style.text_align {
+        props.push(("textAlign", v.clone()));
+    }
+    if let Some(v) = &style.display {
+        props.push(("display", v.clone()));
+    }
+    if let Some(v) = &style.flex_direction {
+        props.push(("flexDirection", v.clone()));
+    }
+    if let Some(v) = &style.gap {
+        props.push(("gap", v.clone()));
+    }
+
+    let anim = animation_value(animation);
+    if !anim.is_empty() {
+        props.push(("animation", anim));
+    }
+
+    props
+}
+
+/// A single-quoted JS string literal. Backslash and quote are escaped so a style
+/// value or label cannot terminate the literal and corrupt the generated module.
+pub(crate) fn js_string_literal(value: &str) -> String {
+    let escaped = value.replace('\\', "\\\\").replace('\'', "\\'");
+    format!("'{escaped}'")
+}
+
+/// Escape `value` for inclusion *inside* a Rust string literal (the surrounding
+/// quotes are added by the caller).
+///
+/// This is deliberately not [`escape_html`]. A Leptos `view!` macro compiles the
+/// string literal straight into Rust data and sets it on the DOM, so HTML
+/// entities are **not** decoded: escaping `&` to `&amp;` would change the
+/// component's runtime value, turning an href of `?a=1&b=2` into
+/// `?a=1&amp;b=2` on the rendered page. What actually has to be escaped is
+/// whatever would end the literal or be reinterpreted by the Rust lexer:
+/// backslash, the double quote, and the control characters that have Rust escape
+/// sequences. The `view!` tokenizer sees the whole quoted literal as one token,
+/// so braces and angle brackets inside it need no special handling.
+///
+/// HTML escaping stays the right tool for the templates that are themselves HTML
+/// (HTML, Vue, Svelte, Tailwind) and for Markdown, where entities *are* decoded.
+pub(crate) fn rust_string_literal(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len() + 8);
+    for c in value.chars() {
+        match c {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            // Any other control character must not appear raw in the literal.
+            c if c.is_control() => escaped.push_str(&format!("\\u{{{:x}}}", c as u32)),
+            c => escaped.push(c),
+        }
+    }
+    escaped
 }
 
 /// Base component CSS embedded into Plain exports so the result is self-contained.
@@ -133,7 +273,7 @@ impl LeptosCodeGenerator {
                 let label_expr = if let Some(bind) = btn.bindings.get("label") {
                     format!("move || {}.get()", bind)
                 } else {
-                    format!("\"{}\"", btn.label)
+                    format!("\"{}\"", rust_string_literal(&btn.label))
                 };
 
                 let disabled_attr = if let Some(bind) = btn.bindings.get("disabled") {
@@ -206,7 +346,7 @@ impl LeptosCodeGenerator {
                 let content_expr = if let Some(bind) = txt.bindings.get("content") {
                     format!("move || {}.get()", bind)
                 } else {
-                    format!("\"{}\"", txt.content)
+                    format!("\"{}\"", rust_string_literal(&txt.content))
                 };
 
                 output.push_str(&format!(
@@ -263,7 +403,7 @@ impl LeptosCodeGenerator {
                 let placeholder_attr = if let Some(bind) = inp.bindings.get("placeholder") {
                     format!("prop:placeholder=move || {}.get()", bind)
                 } else {
-                    format!("placeholder=\"{}\"", inp.placeholder)
+                    format!("placeholder=\"{}\"", rust_string_literal(&inp.placeholder))
                 };
 
                 let disabled_attr = if let Some(bind) = inp.bindings.get("disabled") {
@@ -325,8 +465,8 @@ impl LeptosCodeGenerator {
                         .map(|o| {
                             format!(
                                 "view! {{ <option value=\"{}\">\"{}\"</option> }}",
-                                o.trim(),
-                                o.trim()
+                                rust_string_literal(o.trim()),
+                                rust_string_literal(o.trim())
                             )
                         })
                         .collect::<Vec<_>>()
@@ -360,7 +500,8 @@ impl LeptosCodeGenerator {
                 if !sel.placeholder.is_empty() {
                     output.push_str(&format!(
                         "{}            <option value=\"\" disabled selected>\"{}\"</option>\n",
-                        indent, sel.placeholder
+                        indent,
+                        rust_string_literal(&sel.placeholder)
                     ));
                 }
 
@@ -500,13 +641,13 @@ impl LeptosCodeGenerator {
                 let src_attr = if let Some(bind) = img.bindings.get("src") {
                     format!("prop:src=move || {}.get()", bind)
                 } else {
-                    format!("src=\"{}\"", img.src)
+                    format!("src=\"{}\"", rust_string_literal(&img.src))
                 };
 
                 let alt_attr = if let Some(bind) = img.bindings.get("alt") {
                     format!("prop:alt=move || {}.get()", bind)
                 } else {
-                    format!("alt=\"{}\"", img.alt)
+                    format!("alt=\"{}\"", rust_string_literal(&img.alt))
                 };
 
                 output.push_str(&format!(
@@ -647,7 +788,7 @@ impl LeptosCodeGenerator {
 
                 signals.push((
                     signal_name.clone(),
-                    format!("\"{}\".to_string()", radio.selected),
+                    format!("\"{}\".to_string()", rust_string_literal(&radio.selected)),
                 ));
 
                 output.push_str(&format!(
@@ -719,6 +860,55 @@ impl LeptosCodeGenerator {
                     };
                     output.push_str(&format!("{}        <span>{:.0}%</span>\n", indent, percent));
                 }
+            }
+            CanvasComponent::Link(link) => {
+                // The values go into Rust string literals inside a `view!` macro,
+                // so they are escaped for a Rust literal, *not* as HTML. Escaping
+                // them as HTML would bake entities into the runtime value
+                // (`?a=1&b=2` becoming `?a=1&amp;b=2`).
+                let href_value = rust_string_literal(&link.href);
+                let text_value = rust_string_literal(&link.text);
+
+                let href_attr = if let Some(bind) = link.bindings.get("href") {
+                    format!("href=move || {}.get()", bind)
+                } else {
+                    format!("href=\"{}\"", href_value)
+                };
+
+                let id_attr = if let Some(bind) = link.bindings.get("id") {
+                    format!(" id=move || {}.get()", bind)
+                } else {
+                    String::new()
+                };
+
+                let class_attr = if let Some(bind) = link.bindings.get("custom_css_classes") {
+                    format!(" class=move || format!(\"{{}}\", {}.get())", bind)
+                } else {
+                    String::new()
+                };
+
+                let text_expr = if let Some(bind) = link.bindings.get("text") {
+                    format!("move || {}.get()", bind)
+                } else {
+                    format!("\"{}\"", text_value)
+                };
+
+                // The canvas applies the link's style and animation; the export
+                // must carry the same inline CSS or a styled link regresses. The
+                // CSS goes into a Rust string literal too, so it is escaped as
+                // one — HTML escaping here would corrupt any value containing
+                // `&`.
+                let inline_css = component_inline_css(&link.style, &link.animation);
+                let style_attr = if inline_css.is_empty() {
+                    String::new()
+                } else {
+                    format!(" style=\"{}\"", rust_string_literal(&inline_css))
+                };
+
+                output.push_str(&format!(
+                    "{}        <a {}{}{}{}>{}</a>\n",
+                    indent, href_attr, id_attr, class_attr, style_attr, text_expr
+                ));
             }
         }
 
@@ -1007,6 +1197,21 @@ impl HtmlCodeGenerator {
                     indent, progress.value, progress.max
                 ));
             }
+            CanvasComponent::Link(link) => {
+                let inline_css = component_inline_css(&link.style, &link.animation);
+                let style_attr = if inline_css.is_empty() {
+                    String::new()
+                } else {
+                    format!(" style=\"{}\"", escape_html(&inline_css))
+                };
+                output.push_str(&format!(
+                    "{}<a href=\"{}\"{}>{}</a>\n",
+                    indent,
+                    escape_html(&link.href),
+                    style_attr,
+                    escape_html(&link.text)
+                ));
+            }
         }
 
         Ok(())
@@ -1156,6 +1361,17 @@ impl MarkdownCodeGenerator {
                     indent, progress.value, progress.max
                 ));
             }
+            CanvasComponent::Link(link) => {
+                // Markdown cannot express style or animation, so those are lost
+                // by design; the URL and text are kept as a real Markdown link
+                // rather than a label so the semantics survive.
+                output.push_str(&format!(
+                    "{}- [{}]({})\n",
+                    indent,
+                    escape_html(&link.text),
+                    link.href.replace('(', "%28").replace(')', "%29")
+                ));
+            }
         }
 
         Ok(())
@@ -1216,6 +1432,90 @@ mod tests {
         assert!(code.contains("<!DOCTYPE html>"));
         assert!(code.contains("<body>"));
         assert!(code.contains("Hello World"));
+    }
+
+    /// A palette Heading must export a semantic heading, not a paragraph, and a
+    /// Link must export a real anchor with its href.
+    #[test]
+    fn heading_and_link_export_with_their_semantics() {
+        use crate::domain::{LinkComponent, TextStyle, TextTag};
+
+        // Resolve the components the way the palette does, so a palette entry
+        // that stops carrying its semantics fails this test too.
+        let library = crate::builder::component_library::default_library_components();
+        let drag = |name: &str| {
+            let entry = library
+                .iter()
+                .find(|c| c.name == name)
+                .unwrap_or_else(|| panic!("{name} missing from the live library"));
+            crate::builder::component_library::create_canvas_component_from_payload(
+                &crate::builder::component_library::palette_drag_payload(entry),
+                &library,
+            )
+            .unwrap_or_else(|| panic!("{name} must resolve"))
+        };
+
+        let heading = drag("Heading");
+        let link = drag("Link");
+        assert_eq!(
+            heading.component_type(),
+            crate::domain::ComponentType::Text,
+            "the palette Heading must resolve to a text component"
+        );
+        assert!(
+            matches!(&heading, CanvasComponent::Text(t) if t.tag == TextTag::H1),
+            "the palette Heading must carry an H1 tag"
+        );
+        assert!(
+            matches!(&link, CanvasComponent::Link(_)),
+            "the palette Link must resolve to a real link component"
+        );
+
+        let html = HtmlCodeGenerator
+            .generate(&[heading.clone(), link.clone()], &[])
+            .unwrap();
+        assert!(
+            html.contains("<h1>"),
+            "Heading must export as a semantic heading, got:\n{html}"
+        );
+        assert!(
+            html.contains("<a href="),
+            "Link must export as an anchor with its href, got:\n{html}"
+        );
+
+        let leptos = LeptosCodeGenerator::new(ExportPreset::Plain)
+            .generate(&[heading, link], &[])
+            .unwrap();
+        assert!(
+            leptos.contains("<a href="),
+            "the Leptos export must keep the hyperlink, got:\n{leptos}"
+        );
+        assert!(
+            leptos.contains("<h1"),
+            "the Leptos export must keep the heading semantic, got:\n{leptos}"
+        );
+
+        // A hand-built link with a real URL still round-trips its href.
+        let explicit = CanvasComponent::Link(LinkComponent::new(
+            "https://example.com".to_string(),
+            "Docs".to_string(),
+        ));
+        let html = HtmlCodeGenerator.generate(&[explicit], &[]).unwrap();
+        assert!(
+            html.contains("<a href=\"https://example.com\">Docs</a>"),
+            "Link must export as an anchor with its href, got:\n{html}"
+        );
+
+        let mut styled = TextComponent::new("Title".to_string());
+        styled.style = TextStyle::Heading1;
+        styled.tag = TextTag::H1;
+        let html = HtmlCodeGenerator
+            .generate(&[CanvasComponent::Text(styled)], &[])
+            .unwrap();
+        assert!(
+            html.contains("<h1>Title</h1>"),
+            "a styled heading must export as <h1>Title</h1>, got:\n{html}"
+        );
     }
 
     #[test]
@@ -1358,5 +1658,347 @@ mod tests {
         assert!(code.contains("<hr"));
         assert!(code.contains("badge-default"));
         assert!(code.contains("<progress"));
+    }
+
+    // ---------------------------------------------------------------------
+    // Link export: a styled/animated Link must keep its visual settings in
+    // every visual format, not collapse to a bare anchor.
+    // ---------------------------------------------------------------------
+
+    /// A link with a non-default URL, non-default text, a clearly visible style
+    /// and an animation — the shape every assertion below checks for.
+    fn styled_link() -> CanvasComponent {
+        use crate::domain::{Animation, AnimationType, ComponentStyle, LinkComponent};
+        CanvasComponent::Link(LinkComponent {
+            id: Default::default(),
+            text: "Read the docs".to_string(),
+            href: "https://example.com/guide?a=1&b=2".to_string(),
+            style: ComponentStyle {
+                color: Some("#2563eb".to_string()),
+                font_size: Some(18),
+                font_weight: Some("bold".to_string()),
+                padding: Some("4px 8px".to_string()),
+                background_color: Some("#f8fafc".to_string()),
+                ..Default::default()
+            },
+            animation: Some(Animation {
+                animation_type: AnimationType::FadeIn,
+                duration: 0.5,
+                delay: 0.0,
+                infinite: false,
+            }),
+            bindings: Default::default(),
+        })
+    }
+
+    #[test]
+    fn test_html_link_export_preserves_style_and_animation() {
+        let html = HtmlCodeGenerator.generate(&[styled_link()], &[]).unwrap();
+
+        assert!(
+            html.contains("href=\"https://example.com/guide?a=1&amp;b=2\""),
+            "the href must be preserved and attribute-escaped, got:\n{html}"
+        );
+        assert!(html.contains("Read the docs"), "the text must be preserved");
+        assert!(
+            html.contains("color: #2563eb") && html.contains("font-size: 18px"),
+            "the ComponentStyle must be exported inline, got:\n{html}"
+        );
+        assert!(
+            html.contains("animation: fadeIn 0.5s"),
+            "the animation must be exported inline, got:\n{html}"
+        );
+    }
+
+    #[test]
+    fn test_leptos_link_export_preserves_style_and_animation() {
+        let code = LeptosCodeGenerator::new(ExportPreset::Plain)
+            .generate(&[styled_link()], &[])
+            .unwrap();
+
+        assert!(
+            code.contains("href=\"https://example.com/guide?a=1&b=2\""),
+            "the Leptos href must keep its data (not HTML entities), got:\n{code}"
+        );
+        assert!(code.contains("Read the docs"));
+        assert!(
+            code.contains("color: #2563eb") && code.contains("animation: fadeIn 0.5s"),
+            "the Leptos anchor must carry the same inline CSS as the canvas, got:\n{code}"
+        );
+    }
+
+    #[test]
+    fn test_leptos_link_href_binding_is_exported() {
+        let mut link = match styled_link() {
+            CanvasComponent::Link(l) => l,
+            _ => unreachable!(),
+        };
+        link.bindings
+            .insert("href".to_string(), "next_url".to_string());
+
+        let code = LeptosCodeGenerator::new(ExportPreset::Plain)
+            .generate(&[CanvasComponent::Link(link)], &[])
+            .unwrap();
+
+        assert!(
+            code.contains("next_url.get()"),
+            "an href binding must survive into the Leptos export, got:\n{code}"
+        );
+    }
+
+    /// A `<script>` in the text must not be able to inject markup.
+    #[test]
+    fn test_link_export_escapes_text() {
+        let mut link = match styled_link() {
+            CanvasComponent::Link(l) => l,
+            _ => unreachable!(),
+        };
+        link.text = "<script>alert('x')</script>".to_string();
+
+        let html = HtmlCodeGenerator
+            .generate(&[CanvasComponent::Link(link)], &[])
+            .unwrap();
+        assert!(
+            !html.contains("<script>"),
+            "link text must be escaped, got:\n{html}"
+        );
+        assert!(html.contains("&lt;script&gt;"));
+    }
+
+    #[test]
+    fn test_markdown_link_is_semantic() {
+        let md = MarkdownCodeGenerator
+            .generate(&[styled_link()], &[])
+            .unwrap();
+
+        // Markdown cannot carry style or animation; it must at least keep a real
+        // link rather than degrade to a bare label.
+        assert!(
+            md.contains("[Read the docs](https://example.com/guide?a=1&b=2)"),
+            "Markdown must emit a semantic link, got:\n{md}"
+        );
+    }
+
+    /// Regression: the Leptos generator escaped the link's href and text as
+    /// HTML, so the entities ended up baked into the generated Rust string
+    /// literal. Leptos sets that literal on the DOM verbatim — entities are not
+    /// decoded — so `?a=1&b=2` rendered as `?a=1&amp;b=2` and a label containing
+    /// `&` gained a literal `&amp;`. The literal must instead be escaped for
+    /// Rust, so the data survives unchanged.
+    #[test]
+    fn test_leptos_link_does_not_html_escape_data() {
+        let mut link = match styled_link() {
+            CanvasComponent::Link(l) => l,
+            _ => unreachable!(),
+        };
+        link.href = "https://example.com/guide?a=1&b=2&c=<3>".to_string();
+        link.text = "A & B".to_string();
+
+        let code = LeptosCodeGenerator::new(ExportPreset::Plain)
+            .generate(&[CanvasComponent::Link(link)], &[])
+            .unwrap();
+
+        assert!(
+            code.contains("href=\"https://example.com/guide?a=1&b=2&c=<3>\""),
+            "the href must reach the Leptos literal unchanged, got:\n{code}"
+        );
+        assert!(
+            code.contains("\"A & B\""),
+            "the link text must reach the Leptos literal unchanged, got:\n{code}"
+        );
+        assert!(
+            !code.contains("&amp;") && !code.contains("&lt;"),
+            "data must not be turned into HTML entities in a Leptos literal, got:\n{code}"
+        );
+    }
+
+    /// The Rust literal escaper must neutralise everything that could end the
+    /// literal or be reinterpreted by the lexer: backslash, double quote and
+    /// newline. The generated module has to stay parseable while the runtime
+    /// value stays identical.
+    #[test]
+    fn test_leptos_link_literal_escapes_for_rust() {
+        let mut link = match styled_link() {
+            CanvasComponent::Link(l) => l,
+            _ => unreachable!(),
+        };
+        link.text = "say \"hi\"\\ then\nnew line".to_string();
+
+        let code = LeptosCodeGenerator::new(ExportPreset::Plain)
+            .generate(&[CanvasComponent::Link(link)], &[])
+            .unwrap();
+
+        assert!(
+            code.contains(r#""say \"hi\"\\ then\nnew line""#),
+            "quotes, backslashes and newlines must be escaped for a Rust literal, got:\n{code}"
+        );
+        assert!(
+            !code.contains("\"say \"hi\"\\ then"),
+            "an unescaped quote must not terminate the literal, got:\n{code}"
+        );
+    }
+
+    /// HTML output is markup, so the data *must* be entity-escaped there — the
+    /// opposite of the Leptos case. This pins that the two contexts stay
+    /// separate rather than one being "fixed" into the other.
+    #[test]
+    fn test_html_link_still_uses_entities() {
+        let mut link = match styled_link() {
+            CanvasComponent::Link(l) => l,
+            _ => unreachable!(),
+        };
+        link.href = "https://example.com/guide?a=1&b=2".to_string();
+        link.text = "<script>alert('x') & more</script>".to_string();
+
+        let html = HtmlCodeGenerator
+            .generate(&[CanvasComponent::Link(link)], &[])
+            .unwrap();
+
+        assert!(
+            html.contains("&amp;"),
+            "an HTML attribute must escape `&` as an entity, got:\n{html}"
+        );
+        assert!(
+            !html.contains("<script>"),
+            "an HTML text node must escape markup, got:\n{html}"
+        );
+        assert!(html.contains("&lt;script&gt;"));
+    }
+
+    /// JSON is a lossless serialisation, so the link's style and animation must
+    /// round-trip through it as structured data.
+    #[test]
+    fn test_json_link_export_keeps_style_and_animation() {
+        let json = JsonCodeGenerator.generate(&[styled_link()], &[]).unwrap();
+
+        assert!(json.contains("\"href\": \"https://example.com/guide?a=1&b=2\""));
+        assert!(json.contains("\"text\": \"Read the docs\""));
+        assert!(json.contains("\"color\": \"#2563eb\""));
+        assert!(json.contains("\"animation_type\": \"FadeIn\""));
+    }
+
+    /// Every applied `ComponentStyle` field must reach both the canvas and every
+    /// visual exporter. The canvas renders `StyleTag`/`to_css_string` directly, so
+    /// this pins the exporter side to the same set: a field added to
+    /// `to_css_string` without a matching exporter entry (or vice versa) fails
+    /// here. The reserved `custom_css` field is deliberately excluded — it is
+    /// applied by neither (see `custom_css_is_not_a_visual_setting`).
+    #[test]
+    fn test_every_applied_style_field_reaches_the_canvas_and_exporters() {
+        use crate::domain::{Animation, AnimationType, ComponentStyle, LinkComponent};
+        use crate::services::{
+            ReactGenerator, SvelteGenerator, TailwindHtmlGenerator, VueGenerator,
+        };
+
+        let style = ComponentStyle {
+            padding: Some("11px".to_string()),
+            margin: Some("12px".to_string()),
+            width: Some("13px".to_string()),
+            height: Some("14px".to_string()),
+            color: Some("rgb(21, 22, 23)".to_string()),
+            background_color: Some("rgb(31, 32, 33)".to_string()),
+            border_color: Some("rgb(41, 42, 43)".to_string()),
+            border_width: Some(3),
+            border_radius: Some(17),
+            font_size: Some(18),
+            font_weight: Some("600".to_string()),
+            text_align: Some("center".to_string()),
+            display: Some("flex".to_string()),
+            flex_direction: Some("column".to_string()),
+            gap: Some("19px".to_string()),
+            custom_css: None,
+        };
+
+        // The declarations the canvas applies. Each must survive into every
+        // visual exporter.
+        let canvas_css = style.to_css_string();
+        let expected = [
+            "padding: 11px;",
+            "margin: 12px;",
+            "width: 13px;",
+            "height: 14px;",
+            "color: rgb(21, 22, 23);",
+            "background-color: rgb(31, 32, 33);",
+            "border: 3px solid rgb(41, 42, 43);",
+            "border-radius: 17px;",
+            "font-size: 18px;",
+            "font-weight: 600;",
+            "text-align: center;",
+            "display: flex;",
+            "flex-direction: column;",
+            "gap: 19px;",
+        ];
+        for declaration in expected {
+            assert!(
+                canvas_css.contains(declaration),
+                "the canvas must apply `{declaration}`; to_css_string returned:\n{canvas_css}"
+            );
+        }
+
+        let link = CanvasComponent::Link(LinkComponent {
+            id: Default::default(),
+            text: "Styled".to_string(),
+            href: "https://example.com".to_string(),
+            style,
+            animation: Some(Animation {
+                animation_type: AnimationType::FadeIn,
+                duration: 0.5,
+                delay: 0.0,
+                infinite: false,
+            }),
+            bindings: Default::default(),
+        });
+
+        let one = std::slice::from_ref(&link);
+        let visual_outputs: Vec<(&str, String)> = vec![
+            (
+                "Leptos",
+                LeptosCodeGenerator::new(ExportPreset::Plain)
+                    .generate(one, &[])
+                    .unwrap(),
+            ),
+            ("HTML", HtmlCodeGenerator.generate(one, &[]).unwrap()),
+            ("React", ReactGenerator.generate(one, &[]).unwrap()),
+            ("Vue", VueGenerator.generate(one, &[]).unwrap()),
+            ("Svelte", SvelteGenerator.generate(one, &[]).unwrap()),
+            (
+                "Tailwind HTML",
+                TailwindHtmlGenerator.generate(one, &[]).unwrap(),
+            ),
+        ];
+
+        for (name, output) in &visual_outputs {
+            assert!(
+                output.contains("https://example.com"),
+                "{name} must keep the href, got:\n{output}"
+            );
+            assert!(
+                output.contains("fadeIn") && output.contains("0.5s"),
+                "{name} must keep the animation, got:\n{output}"
+            );
+            // Each canvas declaration's value must be present, in the framework's
+            // own spelling (`backgroundColor` vs `background-color`).
+            for value in [
+                "11px",
+                "12px",
+                "13px",
+                "14px",
+                "rgb(21, 22, 23)",
+                "rgb(31, 32, 33)",
+                "rgb(41, 42, 43)",
+                "17px",
+                "18px",
+                "600",
+                "center",
+                "flex",
+                "column",
+                "19px",
+            ] {
+                assert!(
+                    output.contains(value),
+                    "{name} is missing the style value `{value}` present on the canvas, got:\n{output}"
+                );
+            }
+        }
     }
 }

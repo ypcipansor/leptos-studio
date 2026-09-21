@@ -53,6 +53,9 @@ fn PreviewNode(component: CanvasComponent) -> impl IntoView {
         CanvasComponent::Text(txt) => view! {
             <div><span class="preview-inline-margin">{txt.content}</span></div>
         }.into_any(),
+        CanvasComponent::Link(link) => view! {
+            <div><a class="preview-inline-margin" href=link.href>{link.text}</a></div>
+        }.into_any(),
         CanvasComponent::Input(inp) => view! {
             <div><input placeholder=inp.placeholder class="preview-inline-margin"/></div>
         }.into_any(),

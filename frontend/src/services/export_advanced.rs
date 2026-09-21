@@ -4,8 +4,10 @@
 //! React components, and other formats.
 
 use crate::domain::{AppError, AppResult, CanvasComponent, Variable, VariableType};
+use crate::utils::escape_html;
 
 use super::CodeGenerator;
+use super::export_service::{component_inline_css, js_string_literal, style_js_properties};
 
 /// JSON Schema generator for component validation
 pub struct JsonSchemaGenerator;
@@ -34,8 +36,27 @@ impl CodeGenerator for JsonSchemaGenerator {
                         { "$ref": "#/definitions/ImageComponent" },
                         { "$ref": "#/definitions/CardComponent" },
                         { "$ref": "#/definitions/SelectComponent" },
-                        { "$ref": "#/definitions/CustomComponent" }
+                        { "$ref": "#/definitions/CustomComponent" },
+                        { "$ref": "#/definitions/LinkComponent" }
                     ]
+                },
+                "LinkComponent": {
+                    "type": "object",
+                    "required": ["Link"],
+                    "properties": {
+                        "Link": {
+                            "type": "object",
+                            "required": ["id", "text", "href"],
+                            "properties": {
+                                "id": { "type": "string", "format": "uuid" },
+                                "text": { "type": "string" },
+                                "href": { "type": "string" },
+                                "style": { "type": "object" },
+                                "animation": { "type": ["object", "null"] },
+                                "bindings": { "type": "object" }
+                            }
+                        }
+                    }
                 },
                 "SelectComponent": {
                     "type": "object",
@@ -294,6 +315,46 @@ export interface Spacing {
   left: number;
 }
 
+// Visual style settings a component can carry. Mirrors the frontend's
+// ComponentStyle; every field is optional.
+export interface ComponentStyle {
+  padding?: string;
+  margin?: string;
+  width?: string;
+  height?: string;
+  color?: string;
+  background_color?: string;
+  border_color?: string;
+  border_width?: number;
+  border_radius?: number;
+  font_size?: number;
+  font_weight?: string;
+  text_align?: string;
+  display?: string;
+  flex_direction?: string;
+  gap?: string;
+  custom_css?: string;
+}
+
+// Animation presets
+export type AnimationType =
+  | 'None'
+  | 'FadeIn'
+  | 'SlideInUp'
+  | 'SlideInDown'
+  | 'SlideInLeft'
+  | 'SlideInRight'
+  | 'Bounce'
+  | 'ZoomIn'
+  | 'Pulse';
+
+export interface Animation {
+  animation_type: AnimationType;
+  duration: number;
+  delay: number;
+  infinite: boolean;
+}
+
 // Button component
 export interface ButtonComponent {
   id: ComponentId;
@@ -372,6 +433,16 @@ export interface CardComponent {
   border_radius: number;
 }
 
+// Link component
+export interface LinkComponent {
+  id: ComponentId;
+  text: string;
+  href: string;
+  style?: ComponentStyle;
+  animation?: Animation | null;
+  bindings?: Record<string, string>;
+}
+
 // Canvas component union type
 export type CanvasComponent = 
   | { Button: ButtonComponent }
@@ -381,7 +452,8 @@ export type CanvasComponent =
   | { Image: ImageComponent }
   | { Card: CardComponent }
   | { Select: SelectComponent }
-  | { Custom: CustomComponent };
+  | { Custom: CustomComponent }
+  | { Link: LinkComponent };
 
 // Layout type (array of components)
 export type Layout = CanvasComponent[];
@@ -910,6 +982,49 @@ impl ReactGenerator {
                     indent, progress.value, progress.max
                 ));
             }
+            CanvasComponent::Link(link) => {
+                let id_attr = if let Some(bind) = link.bindings.get("id") {
+                    format!(" id={{vars['{}']}}", bind)
+                } else {
+                    String::new()
+                };
+
+                let class_attr = if let Some(bind) = link.bindings.get("custom_css_classes") {
+                    format!(" className={{vars['{}']}}", bind)
+                } else {
+                    String::new()
+                };
+
+                let href_expr = if let Some(bind) = link.bindings.get("href") {
+                    format!("{{vars['{}']}}", bind)
+                } else {
+                    format!("\"{}\"", escape_html(&link.href))
+                };
+
+                let text_expr = if let Some(bind) = link.bindings.get("text") {
+                    format!("{{vars['{}']}}", bind)
+                } else {
+                    escape_html(&link.text).to_string()
+                };
+
+                // React takes styles as an object, so the same settings the
+                // canvas applies are emitted as camelCase properties here.
+                let style_props = style_js_properties(&link.style, &link.animation);
+                let style_attr = if style_props.is_empty() {
+                    String::new()
+                } else {
+                    let pairs: Vec<String> = style_props
+                        .iter()
+                        .map(|(key, value)| format!("{key}: {}", js_string_literal(value)))
+                        .collect();
+                    format!(" style={{{{ {} }}}}", pairs.join(", "))
+                };
+
+                output.push_str(&format!(
+                    "{}<a{} href={}{}{}>{}</a>\n",
+                    indent, id_attr, href_expr, class_attr, style_attr, text_expr
+                ));
+            }
         }
 
         Ok(())
@@ -1301,6 +1416,44 @@ impl VueGenerator {
                 output.push_str(&format!(
                     "{}<progress :value=\"{}\" :max=\"{}\" style=\"width: 100%;\"></progress>\n",
                     indent, progress.value, progress.max
+                ));
+            }
+            CanvasComponent::Link(link) => {
+                let id_attr = if let Some(bind) = link.bindings.get("id") {
+                    format!(" :id=\"vars['{}']\"", bind)
+                } else {
+                    String::new()
+                };
+
+                let class_attr = if let Some(bind) = link.bindings.get("custom_css_classes") {
+                    format!(" :class=\"vars['{}']\"", bind)
+                } else {
+                    String::new()
+                };
+
+                let href_attr = if let Some(bind) = link.bindings.get("href") {
+                    format!(":href=\"vars['{}']\"", bind)
+                } else {
+                    format!("href=\"{}\"", escape_html(&link.href))
+                };
+
+                let text_expr = if let Some(bind) = link.bindings.get("text") {
+                    format!("{{{{ vars['{}'] }}}}", bind)
+                } else {
+                    escape_html(&link.text).to_string()
+                };
+
+                // Vue takes a CSS declaration string, as the canvas does.
+                let inline_css = component_inline_css(&link.style, &link.animation);
+                let style_attr = if inline_css.is_empty() {
+                    String::new()
+                } else {
+                    format!(" style=\"{}\"", escape_html(&inline_css))
+                };
+
+                output.push_str(&format!(
+                    "{}<a{}{} {}{}>{}</a>\n",
+                    indent, id_attr, class_attr, href_attr, style_attr, text_expr
                 ));
             }
         }
@@ -1786,6 +1939,24 @@ impl TailwindHtmlGenerator {
                     indent, indent, percent, indent
                 ));
             }
+            CanvasComponent::Link(link) => {
+                // The canvas link styling is the visual contract; class-based
+                // Tailwind output keeps that styling as a class alongside the
+                // link colour, plus any per-component overrides inline.
+                let inline_css = component_inline_css(&link.style, &link.animation);
+                let style_attr = if inline_css.is_empty() {
+                    String::new()
+                } else {
+                    format!(" style=\"{}\"", escape_html(&inline_css))
+                };
+                output.push_str(&format!(
+                    "{}<a href=\"{}\" class=\"text-blue-600 underline hover:text-blue-800\"{}>{}</a>\n",
+                    indent,
+                    escape_html(&link.href),
+                    style_attr,
+                    escape_html(&link.text)
+                ));
+            }
         }
 
         Ok(())
@@ -2262,6 +2433,43 @@ impl SvelteGenerator {
                     indent, progress.value, progress.max
                 ));
             }
+            CanvasComponent::Link(link) => {
+                let id_attr = if let Some(bind) = link.bindings.get("id") {
+                    format!(" id={{vars['{}']}}", bind)
+                } else {
+                    String::new()
+                };
+
+                let class_attr = if let Some(bind) = link.bindings.get("custom_css_classes") {
+                    format!(" class={{vars['{}']}}", bind)
+                } else {
+                    String::new()
+                };
+
+                let href_attr = if let Some(bind) = link.bindings.get("href") {
+                    format!("href={{vars['{}']}}", bind)
+                } else {
+                    format!("href=\"{}\"", escape_html(&link.href))
+                };
+
+                let text_expr = if let Some(bind) = link.bindings.get("text") {
+                    format!("{{vars['{}']}}", bind)
+                } else {
+                    escape_html(&link.text).to_string()
+                };
+
+                let inline_css = component_inline_css(&link.style, &link.animation);
+                let style_attr = if inline_css.is_empty() {
+                    String::new()
+                } else {
+                    format!(" style=\"{}\"", escape_html(&inline_css))
+                };
+
+                output.push_str(&format!(
+                    "{}<a{}{} {}{}>{}</a>\n",
+                    indent, id_attr, class_attr, href_attr, style_attr, text_expr
+                ));
+            }
         }
 
         Ok(())
@@ -2344,5 +2552,270 @@ mod tests {
 
         assert!(code.contains("<script"));
         assert!(code.contains("Hello"));
+    }
+
+    // ---------------------------------------------------------------------
+    // Link export: every visual format must keep the link's style and
+    // animation instead of collapsing to a bare anchor.
+    // ---------------------------------------------------------------------
+
+    /// A link with a non-default URL, non-default text, a clearly visible style
+    /// and an animation.
+    fn styled_link() -> CanvasComponent {
+        use crate::domain::{Animation, AnimationType, ComponentStyle, LinkComponent};
+        CanvasComponent::Link(LinkComponent {
+            id: Default::default(),
+            text: "Read the docs".to_string(),
+            href: "https://example.com/guide?a=1&b=2".to_string(),
+            style: ComponentStyle {
+                color: Some("#2563eb".to_string()),
+                font_size: Some(18),
+                font_weight: Some("bold".to_string()),
+                padding: Some("4px 8px".to_string()),
+                ..Default::default()
+            },
+            animation: Some(Animation {
+                animation_type: AnimationType::FadeIn,
+                duration: 0.5,
+                delay: 0.0,
+                infinite: false,
+            }),
+            bindings: Default::default(),
+        })
+    }
+
+    fn link_text() -> String {
+        match styled_link() {
+            CanvasComponent::Link(l) => l.text,
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn test_react_link_export_preserves_style_and_animation() {
+        let code = ReactGenerator.generate(&[styled_link()], &[]).unwrap();
+
+        assert!(
+            code.contains("href=\"https://example.com/guide?a=1&amp;b=2\""),
+            "the href must be preserved, got:\n{code}"
+        );
+        assert!(code.contains(&link_text()));
+        // React takes styles as an object with camelCase keys.
+        assert!(
+            code.contains("style={{"),
+            "React must emit a style object, got:\n{code}"
+        );
+        assert!(
+            code.contains("color: '#2563eb'") && code.contains("fontSize: '18px'"),
+            "the ComponentStyle must be exported as JS properties, got:\n{code}"
+        );
+        assert!(
+            code.contains("animation: 'fadeIn 0.5s ease-in-out 0s 1 both'"),
+            "the animation must be exported as a JS property, got:\n{code}"
+        );
+    }
+
+    #[test]
+    fn test_vue_link_export_preserves_style_and_animation() {
+        let code = VueGenerator.generate(&[styled_link()], &[]).unwrap();
+
+        assert!(
+            code.contains("href=\"https://example.com/guide?a=1&amp;b=2\""),
+            "the href must be preserved, got:\n{code}"
+        );
+        assert!(code.contains(&link_text()));
+        assert!(
+            code.contains("color: #2563eb") && code.contains("animation: fadeIn 0.5s"),
+            "the ComponentStyle and animation must be exported inline, got:\n{code}"
+        );
+    }
+
+    #[test]
+    fn test_svelte_link_export_preserves_style_and_animation() {
+        let code = SvelteGenerator.generate(&[styled_link()], &[]).unwrap();
+
+        assert!(code.contains("href=\"https://example.com/guide?a=1&amp;b=2\""));
+        assert!(code.contains(&link_text()));
+        assert!(
+            code.contains("color: #2563eb") && code.contains("animation: fadeIn 0.5s"),
+            "the ComponentStyle and animation must be exported inline, got:\n{code}"
+        );
+    }
+
+    #[test]
+    fn test_tailwind_link_export_preserves_style_and_animation() {
+        let html = TailwindHtmlGenerator
+            .generate(&[styled_link()], &[])
+            .unwrap();
+
+        assert!(html.contains("href=\"https://example.com/guide?a=1&amp;b=2\""));
+        assert!(html.contains(&link_text()));
+        assert!(
+            html.contains("color: #2563eb") && html.contains("animation: fadeIn 0.5s"),
+            "Tailwind output must keep per-component style and animation, got:\n{html}"
+        );
+    }
+
+    #[test]
+    fn test_json_schema_includes_link_style_surface() {
+        let schema = JsonSchemaGenerator.generate(&[styled_link()], &[]).unwrap();
+
+        assert!(schema.contains("LinkComponent"));
+        assert!(
+            schema.contains("\"style\"") && schema.contains("\"animation\""),
+            "the Link schema must describe style/animation, got:\n{schema}"
+        );
+    }
+
+    #[test]
+    fn test_typescript_link_type_includes_style_and_animation() {
+        let types = TypeScriptGenerator.generate(&[], &[]).unwrap();
+
+        assert!(types.contains("export interface LinkComponent"));
+        assert!(
+            types.contains("export interface ComponentStyle"),
+            "ComponentStyle must be declared so LinkComponent can reference it"
+        );
+        assert!(types.contains("export interface Animation"));
+        assert!(
+            types.contains("style?: ComponentStyle") && types.contains("animation?: Animation"),
+            "LinkComponent must expose style and animation, got:\n{types}"
+        );
+    }
+
+    /// A href binding must survive into the binding-aware generators.
+    #[test]
+    fn test_link_href_binding_is_exported_in_react() {
+        let mut link = match styled_link() {
+            CanvasComponent::Link(l) => l,
+            _ => unreachable!(),
+        };
+        link.bindings
+            .insert("href".to_string(), "next_url".to_string());
+        let code = ReactGenerator
+            .generate(&[CanvasComponent::Link(link)], &[])
+            .unwrap();
+
+        assert!(
+            code.contains("vars['next_url']"),
+            "the href binding must be exported, got:\n{code}"
+        );
+    }
+
+    /// A quote inside a style value must not break the generated JS literal.
+    #[test]
+    fn test_react_link_export_escapes_style_values() {
+        let mut link = match styled_link() {
+            CanvasComponent::Link(l) => l,
+            _ => unreachable!(),
+        };
+        link.style.font_weight = Some("bold'; alert('x".to_string());
+
+        let code = ReactGenerator
+            .generate(&[CanvasComponent::Link(link)], &[])
+            .unwrap();
+
+        assert!(
+            code.contains("bold\\'; alert(\\'x"),
+            "a quote in a style value must be escaped in the JS literal, got:\n{code}"
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // `ComponentStyle.custom_css`: reserved, not an applied visual setting.
+    //
+    // The field has no defined semantics (nothing writes or reads it), so it
+    // must not leak into any visual output — neither a `style` attribute nor a
+    // `class` — while the JSON and TypeScript exporters must keep representing
+    // it so existing project data round-trips. These tests pin both halves of
+    // that decision; if `custom_css` is ever given real semantics they must be
+    // rewritten together with the renderer.
+    // ---------------------------------------------------------------------
+
+    /// The same link, with and without the reserved `custom_css` field.
+    fn link_with_custom_css(value: Option<&str>) -> CanvasComponent {
+        let mut link = match styled_link() {
+            CanvasComponent::Link(l) => l,
+            _ => unreachable!(),
+        };
+        link.style.custom_css = value.map(str::to_string);
+        CanvasComponent::Link(link)
+    }
+
+    #[test]
+    fn custom_css_is_not_a_visual_setting() {
+        use crate::services::JsonCodeGenerator;
+        use crate::services::export_service::{HtmlCodeGenerator, LeptosCodeGenerator};
+        use crate::state::ExportPreset;
+
+        // A value that would be obvious in the output if it were ever emitted as
+        // either inline CSS or a class name.
+        let needle = "sentinel-custom-css-do-not-emit";
+        let (without, with) = (
+            &[link_with_custom_css(None)],
+            &[link_with_custom_css(Some(needle))],
+        );
+
+        let visual_outputs: Vec<(&str, String)> = vec![
+            (
+                "Leptos",
+                LeptosCodeGenerator::new(ExportPreset::Plain)
+                    .generate(with, &[])
+                    .unwrap(),
+            ),
+            ("HTML", HtmlCodeGenerator.generate(with, &[]).unwrap()),
+            ("React", ReactGenerator.generate(with, &[]).unwrap()),
+            ("Vue", VueGenerator.generate(with, &[]).unwrap()),
+            ("Svelte", SvelteGenerator.generate(with, &[]).unwrap()),
+            (
+                "Tailwind HTML",
+                TailwindHtmlGenerator.generate(with, &[]).unwrap(),
+            ),
+        ];
+
+        for (name, output) in &visual_outputs {
+            assert!(
+                !output.contains(needle),
+                "{name} must not emit the reserved custom_css field, got:\n{output}"
+            );
+        }
+
+        // ...and the reserved field must not change the visual output at all:
+        // the canvas ignores it, so every visual exporter must too.
+        let without_react = ReactGenerator.generate(without, &[]).unwrap();
+        let with_react = ReactGenerator.generate(with, &[]).unwrap();
+        assert_eq!(
+            without_react, with_react,
+            "React output must be identical whether or not custom_css is set"
+        );
+
+        let without_html = crate::services::export_service::HtmlCodeGenerator
+            .generate(without, &[])
+            .unwrap();
+        assert_eq!(
+            without_html, visual_outputs[1].1,
+            "HTML output must be identical whether or not custom_css is set"
+        );
+
+        // The JSON exporter must preserve it losslessly — that is the one
+        // supported surface, and existing files must not lose the data.
+        let json = JsonCodeGenerator.generate(with, &[]).unwrap();
+        assert!(
+            json.contains(needle),
+            "JSON must preserve custom_css losslessly, got:\n{json}"
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            parsed[0]["Link"]["style"]["custom_css"],
+            serde_json::json!(needle),
+            "custom_css must round-trip as its own style field"
+        );
+
+        // TypeScript must keep declaring it so generated code can carry the data.
+        let types = TypeScriptGenerator.generate(&[], &[]).unwrap();
+        assert!(
+            types.contains("custom_css?: string;"),
+            "ComponentStyle must still declare custom_css, got:\n{types}"
+        );
     }
 }
