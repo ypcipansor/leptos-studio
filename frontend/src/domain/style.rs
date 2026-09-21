@@ -18,11 +18,26 @@ pub struct ComponentStyle {
     pub display: Option<String>,        // "flex", "grid", "block"
     pub flex_direction: Option<String>, // "row", "column"
     pub gap: Option<String>,            // e.g., "8px"
-    pub custom_css: Option<String>,     // Custom CSS class or inline styles
+    /// Reserved. **Not applied anywhere** — the canvas renderer, the property
+    /// editors and every exporter ignore it, and `to_css_string` deliberately
+    /// omits it.
+    ///
+    /// It is kept (and round-trips losslessly through the JSON and TypeScript
+    /// exporters) because removing it would silently drop data in existing
+    /// project files, but nothing in the app can produce or interpret it: there
+    /// is no editor input for it, and no code path reads it. Its semantics are
+    /// therefore *undefined* — do not assume it holds CSS declarations, class
+    /// names, or anything else, and do not feed it into a `style` or `class`
+    /// attribute. To give a component extra classes, use the
+    /// `bindings["custom_css_classes"]` binding, which the exporters do support.
+    pub custom_css: Option<String>,
 }
 
 impl ComponentStyle {
-    /// Generate inline CSS string from style properties
+    /// Generate inline CSS string from style properties.
+    ///
+    /// Covers every applied visual field. The reserved [`ComponentStyle::custom_css`]
+    /// is intentionally not included — see its field documentation.
     pub fn to_css_string(&self) -> String {
         let mut css = String::new();
 
@@ -72,7 +87,12 @@ impl ComponentStyle {
         css
     }
 
-    /// Get CSS class selector string
+    /// Get CSS class selector string.
+    ///
+    /// **Unwired**: no renderer or exporter calls this, and the reserved
+    /// [`ComponentStyle::custom_css`] it returns has no defined semantics. It is
+    /// kept only for API stability (see `frontend/API.md`); do not start using it
+    /// without first defining what `custom_css` means.
     pub fn to_class_string(&self) -> Option<String> {
         self.custom_css.clone()
     }

@@ -144,6 +144,19 @@ Required sites, in order:
 A component's visual settings (`ComponentStyle` + `Animation`) are part of its semantics, not
 decoration: if the canvas renderer applies them, every visual exporter must too.
 
+**Exception — `ComponentStyle.custom_css`.** This field is reserved and *not* part of visual
+parity: nothing writes it (the `StyleEditor` has no input for it), nothing reads it, and
+`to_css_string` omits it. Both the canvas and every visual exporter therefore ignore it, which is
+consistent — do not "fix" one without the other, and do not assume it holds CSS declarations or
+class names. It survives losslessly through the JSON exporter and is declared in the TypeScript
+output so existing data is not dropped; that is the whole of its supported surface. The
+supported way to add classes is the `bindings["custom_css_classes"]` binding. Consequently the
+parity claim above is "every `ComponentStyle` field the canvas applies", not "every field".
+`frontend/src/services/export_advanced.rs`'s `custom_css_is_not_a_visual_setting` test pins the
+ignored-in-visual-output / preserved-in-JSON behaviour, and
+`export_service.rs`'s `test_every_applied_style_field_reaches_the_canvas_and_exporters` pins the
+positive side — every field `to_css_string` applies reaches all six visual exporters.
+
 ## Modals and Escape
 
 A modal's visibility signal is the single source of truth for three things and they must not
@@ -163,6 +176,22 @@ open/close/hidden Escape behaviour is pinned by the `wasm_tests` module in
   through HTTP (`tower::ServiceExt::oneshot`) rather than calling helpers directly.
 - Backend tests must never touch `backend/projects.json`. Anything that needs a store creates one
   over a temp file (`TestStore` in `backend/src/main.rs`).
+- **A mutating request is one transaction.** `save_project` / `delete_project` must go through
+  `Store::commit`, never mutate `store.projects` directly: `commit` holds `mutation_lock` for the
+  whole mutate-then-write sequence, snapshots the state under the write lock, releases it *before*
+  the filesystem `await` (so readers are not blocked by I/O), and only then writes. Because the
+  transaction is exclusive, the write order matches the state-change order and a failed write rolls
+  back to a snapshot no other transaction could have moved past. Do not "optimise" this by dropping
+  the lock before the write or by cloning outside it — the `concurrent_saves_*` /
+  `concurrent_save_and_delete_*` / `failed_persistence_*` tests fail when the lock is removed.
+- **File writes are atomic.** `write_store_atomically` writes a unique temp file in the target
+  directory, `flush` + `sync_all`, then `rename`s onto `data_file`, so a crash cannot leave
+  truncated JSON. Keep the temp file in the same directory (rename is only atomic within a
+  filesystem).
+- **`component_count` has one definition.** `validation::count_components` (recursive) must be used
+  by both `save_project`'s response and `list_projects`; the dashboard count is not
+  `layout.as_array().len()`. `dashboard_component_count_is_recursive_and_matches_save` pins that
+  save, list, and a reload-from-disk all agree.
 
 ## Documentation
 

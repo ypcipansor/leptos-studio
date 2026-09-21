@@ -1747,4 +1747,129 @@ mod tests {
         assert!(json.contains("\"color\": \"#2563eb\""));
         assert!(json.contains("\"animation_type\": \"FadeIn\""));
     }
+
+    /// Every applied `ComponentStyle` field must reach both the canvas and every
+    /// visual exporter. The canvas renders `StyleTag`/`to_css_string` directly, so
+    /// this pins the exporter side to the same set: a field added to
+    /// `to_css_string` without a matching exporter entry (or vice versa) fails
+    /// here. The reserved `custom_css` field is deliberately excluded — it is
+    /// applied by neither (see `custom_css_is_not_a_visual_setting`).
+    #[test]
+    fn test_every_applied_style_field_reaches_the_canvas_and_exporters() {
+        use crate::domain::{Animation, AnimationType, ComponentStyle, LinkComponent};
+        use crate::services::{
+            ReactGenerator, SvelteGenerator, TailwindHtmlGenerator, VueGenerator,
+        };
+
+        let style = ComponentStyle {
+            padding: Some("11px".to_string()),
+            margin: Some("12px".to_string()),
+            width: Some("13px".to_string()),
+            height: Some("14px".to_string()),
+            color: Some("rgb(21, 22, 23)".to_string()),
+            background_color: Some("rgb(31, 32, 33)".to_string()),
+            border_color: Some("rgb(41, 42, 43)".to_string()),
+            border_width: Some(3),
+            border_radius: Some(17),
+            font_size: Some(18),
+            font_weight: Some("600".to_string()),
+            text_align: Some("center".to_string()),
+            display: Some("flex".to_string()),
+            flex_direction: Some("column".to_string()),
+            gap: Some("19px".to_string()),
+            custom_css: None,
+        };
+
+        // The declarations the canvas applies. Each must survive into every
+        // visual exporter.
+        let canvas_css = style.to_css_string();
+        let expected = [
+            "padding: 11px;",
+            "margin: 12px;",
+            "width: 13px;",
+            "height: 14px;",
+            "color: rgb(21, 22, 23);",
+            "background-color: rgb(31, 32, 33);",
+            "border: 3px solid rgb(41, 42, 43);",
+            "border-radius: 17px;",
+            "font-size: 18px;",
+            "font-weight: 600;",
+            "text-align: center;",
+            "display: flex;",
+            "flex-direction: column;",
+            "gap: 19px;",
+        ];
+        for declaration in expected {
+            assert!(
+                canvas_css.contains(declaration),
+                "the canvas must apply `{declaration}`; to_css_string returned:\n{canvas_css}"
+            );
+        }
+
+        let link = CanvasComponent::Link(LinkComponent {
+            id: Default::default(),
+            text: "Styled".to_string(),
+            href: "https://example.com".to_string(),
+            style,
+            animation: Some(Animation {
+                animation_type: AnimationType::FadeIn,
+                duration: 0.5,
+                delay: 0.0,
+                infinite: false,
+            }),
+            bindings: Default::default(),
+        });
+
+        let one = std::slice::from_ref(&link);
+        let visual_outputs: Vec<(&str, String)> = vec![
+            (
+                "Leptos",
+                LeptosCodeGenerator::new(ExportPreset::Plain)
+                    .generate(one, &[])
+                    .unwrap(),
+            ),
+            ("HTML", HtmlCodeGenerator.generate(one, &[]).unwrap()),
+            ("React", ReactGenerator.generate(one, &[]).unwrap()),
+            ("Vue", VueGenerator.generate(one, &[]).unwrap()),
+            ("Svelte", SvelteGenerator.generate(one, &[]).unwrap()),
+            (
+                "Tailwind HTML",
+                TailwindHtmlGenerator.generate(one, &[]).unwrap(),
+            ),
+        ];
+
+        for (name, output) in &visual_outputs {
+            assert!(
+                output.contains("https://example.com"),
+                "{name} must keep the href, got:\n{output}"
+            );
+            assert!(
+                output.contains("fadeIn") && output.contains("0.5s"),
+                "{name} must keep the animation, got:\n{output}"
+            );
+            // Each canvas declaration's value must be present, in the framework's
+            // own spelling (`backgroundColor` vs `background-color`).
+            for value in [
+                "11px",
+                "12px",
+                "13px",
+                "14px",
+                "rgb(21, 22, 23)",
+                "rgb(31, 32, 33)",
+                "rgb(41, 42, 43)",
+                "17px",
+                "18px",
+                "600",
+                "center",
+                "flex",
+                "column",
+                "19px",
+            ] {
+                assert!(
+                    output.contains(value),
+                    "{name} is missing the style value `{value}` present on the canvas, got:\n{output}"
+                );
+            }
+        }
+    }
 }

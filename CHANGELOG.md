@@ -76,6 +76,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   under `cfg(test)`, and the canvas assertions compare against a pre-interaction snapshot rather
   than an absolute component count.
 - Removed the duplicate "Image" entry from the default library.
+- **Concurrent project saves could corrupt persistence.** `save_project` / `delete_project` mutated
+  `store.projects`, released the write lock, and then wrote the file in a separate step, so two
+  overlapping requests could persist snapshots out of order from the order the state changed, and a
+  failed write's rollback could overwrite another request that had already committed. Every
+  mutating request now runs as one transaction under a dedicated `mutation_lock` (`Store::commit`):
+  the state is snapshotted under the write lock, the lock is released *before* the filesystem
+  `await` (so readers are never blocked by I/O), and the write happens inside the exclusive
+  transaction, so write order matches state-change order and a rollback can only touch this
+  transaction's own change. The file itself is written atomically — a unique temp file in the same
+  directory, `sync_all`, then `rename` — so a crash cannot leave truncated JSON.
+- **The dashboard under-counted nested components.** `save_project` reported a recursive component
+  count via `validation::count_components`, but `GET /api/projects` used `layout.as_array().len()`,
+  so after a refresh a project with children inside a Container or Card showed only its root count
+  and the number disagreed with what saving had reported. `list_projects` now uses the same
+  recursive `validation::count_components`, so there is one definition of the count.
 - **Projects containing a Link could not be saved.** The frontend's `ComponentType` includes `Link`,
   but the backend's `KNOWN_COMPONENT_TYPES` allowlist did not, so `validate_component` rejected any
   layout containing a hyperlink as an unknown type and `POST /api/projects` answered **422** — the
@@ -88,6 +103,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   emit the same inline CSS/animation as the canvas via shared helpers
   (`component_inline_css` / `style_js_properties`); Markdown, which cannot express styling, emits a
   real `[text](url)` link instead of a bare label. href, text, and attribute values are escaped.
+  This parity covers every `ComponentStyle` field the canvas applies; the reserved
+  `custom_css` field is applied by neither, and its semantics are documented as undefined.
 - **The Template Gallery's Escape listener outlived the gallery.** `TemplateGallery` created a local
   `RwSignal::new(true)` and handed it to `use_escape_key`, so the global listener stayed armed for
   the component's whole lifetime rather than the gallery's visibility. If the parent ever hid the

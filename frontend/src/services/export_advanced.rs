@@ -2720,4 +2720,102 @@ mod tests {
             "a quote in a style value must be escaped in the JS literal, got:\n{code}"
         );
     }
+
+    // ---------------------------------------------------------------------
+    // `ComponentStyle.custom_css`: reserved, not an applied visual setting.
+    //
+    // The field has no defined semantics (nothing writes or reads it), so it
+    // must not leak into any visual output — neither a `style` attribute nor a
+    // `class` — while the JSON and TypeScript exporters must keep representing
+    // it so existing project data round-trips. These tests pin both halves of
+    // that decision; if `custom_css` is ever given real semantics they must be
+    // rewritten together with the renderer.
+    // ---------------------------------------------------------------------
+
+    /// The same link, with and without the reserved `custom_css` field.
+    fn link_with_custom_css(value: Option<&str>) -> CanvasComponent {
+        let mut link = match styled_link() {
+            CanvasComponent::Link(l) => l,
+            _ => unreachable!(),
+        };
+        link.style.custom_css = value.map(str::to_string);
+        CanvasComponent::Link(link)
+    }
+
+    #[test]
+    fn custom_css_is_not_a_visual_setting() {
+        use crate::services::JsonCodeGenerator;
+        use crate::services::export_service::{HtmlCodeGenerator, LeptosCodeGenerator};
+        use crate::state::ExportPreset;
+
+        // A value that would be obvious in the output if it were ever emitted as
+        // either inline CSS or a class name.
+        let needle = "sentinel-custom-css-do-not-emit";
+        let (without, with) = (
+            &[link_with_custom_css(None)],
+            &[link_with_custom_css(Some(needle))],
+        );
+
+        let visual_outputs: Vec<(&str, String)> = vec![
+            (
+                "Leptos",
+                LeptosCodeGenerator::new(ExportPreset::Plain)
+                    .generate(with, &[])
+                    .unwrap(),
+            ),
+            ("HTML", HtmlCodeGenerator.generate(with, &[]).unwrap()),
+            ("React", ReactGenerator.generate(with, &[]).unwrap()),
+            ("Vue", VueGenerator.generate(with, &[]).unwrap()),
+            ("Svelte", SvelteGenerator.generate(with, &[]).unwrap()),
+            (
+                "Tailwind HTML",
+                TailwindHtmlGenerator.generate(with, &[]).unwrap(),
+            ),
+        ];
+
+        for (name, output) in &visual_outputs {
+            assert!(
+                !output.contains(needle),
+                "{name} must not emit the reserved custom_css field, got:\n{output}"
+            );
+        }
+
+        // ...and the reserved field must not change the visual output at all:
+        // the canvas ignores it, so every visual exporter must too.
+        let without_react = ReactGenerator.generate(without, &[]).unwrap();
+        let with_react = ReactGenerator.generate(with, &[]).unwrap();
+        assert_eq!(
+            without_react, with_react,
+            "React output must be identical whether or not custom_css is set"
+        );
+
+        let without_html = crate::services::export_service::HtmlCodeGenerator
+            .generate(without, &[])
+            .unwrap();
+        assert_eq!(
+            without_html, visual_outputs[1].1,
+            "HTML output must be identical whether or not custom_css is set"
+        );
+
+        // The JSON exporter must preserve it losslessly — that is the one
+        // supported surface, and existing files must not lose the data.
+        let json = JsonCodeGenerator.generate(with, &[]).unwrap();
+        assert!(
+            json.contains(needle),
+            "JSON must preserve custom_css losslessly, got:\n{json}"
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            parsed[0]["Link"]["style"]["custom_css"],
+            serde_json::json!(needle),
+            "custom_css must round-trip as its own style field"
+        );
+
+        // TypeScript must keep declaring it so generated code can carry the data.
+        let types = TypeScriptGenerator.generate(&[], &[]).unwrap();
+        assert!(
+            types.contains("custom_css?: string;"),
+            "ComponentStyle must still declare custom_css, got:\n{types}"
+        );
+    }
 }
